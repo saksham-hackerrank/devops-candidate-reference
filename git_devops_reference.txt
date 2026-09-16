@@ -1,0 +1,870 @@
+===============================================================================
+                         GIT DEVOPS REFERENCE
+===============================================================================
+
+Use built-in help whenever a version-specific detail is needed:
+
+    git help
+    git help <command>
+    git <command> --help
+    man git
+
+
+CONTENTS
+========
+
+  1.  Installation and help
+  2.  Configuration and identity
+  3.  Repository setup and cloning
+  4.  Working tree, index, and HEAD
+  5.  Status, diff, and inspection
+  6.  Add, commit, and amend
+  7.  Branches and switching
+  8.  Merge and conflict resolution
+  9.  Rebase and conflict resolution
+  10. Remotes, fetch, pull, and push
+  11. Restore, reset, revert, and clean
+  12. Stash
+  13. Tags and releases
+  14. Cherry-pick
+  15. Reflog and recovery
+  16. Bisect
+  17. Ignore rules and attributes
+  18. Worktrees and submodules
+  19. Hooks and automation
+  20. Signing and verification
+
+
+1. INSTALLATION AND HELP
+========================
+
+Check Git
+---------
+
+    git --version
+    which git
+    git version --build-options
+
+Global command help
+-------------------
+
+    git help -a
+    git help -g
+    git help --config
+    git help everyday
+
+Command-specific help
+---------------------
+
+    git help clone
+    git clone --help
+    git log --help
+    git config --help
+
+List aliases and commands
+-------------------------
+
+    git config --global --get-regexp '^alias\.'
+    git help -a
+
+
+2. CONFIGURATION AND IDENTITY
+=============================
+
+Configuration scopes
+--------------------
+- system: applies to all users on the machine.
+- global: applies to the current user.
+- local: applies only to the current repository.
+- worktree: applies to one linked worktree when enabled.
+
+Inspect configuration
+---------------------
+
+    git config --list
+    git config --list --show-origin
+    git config --show-origin --get user.name
+    git config --local --list
+    git config --global --list
+
+Set identity
+------------
+
+    git config --global user.name "Your Name"
+    git config --global user.email "you@example.com"
+    git config --local user.name "Repository Name"
+    git config --local user.email "repo@example.com"
+
+Useful preferences
+------------------
+
+    git config --global init.defaultBranch main
+    git config --global core.editor "vim"
+    git config --global core.autocrlf input
+    git config --global pull.rebase false
+    git config --global fetch.prune true
+    git config --global rerere.enabled true
+
+Credentials
+-----------
+Use the credential manager approved by the environment. Do not place secrets
+directly in a remote URL or commit them to repository files.
+
+    git config --show-origin --get-all credential.helper
+    git credential fill
+    git credential reject
+
+Aliases
+-------
+
+    git config --global alias.st status
+    git config --global alias.last 'log -1 HEAD'
+    git config --global alias.graph 'log --oneline --decorate --graph --all'
+
+
+3. REPOSITORY SETUP AND CLONING
+===============================
+
+Create a repository
+-------------------
+
+    mkdir project
+    cd project
+    git init
+    git status
+
+Initialize with a chosen branch name
+-------------------------------------
+
+    git init -b main
+
+Clone a repository
+------------------
+
+    git clone https://github.com/ORG/REPO.git
+    git clone git@github.com:ORG/REPO.git
+    git clone --branch main --single-branch URL DIRECTORY
+    git clone --depth 1 URL DIRECTORY
+
+Inspect repository metadata
+---------------------------
+
+    git rev-parse --show-toplevel
+    git rev-parse --is-inside-work-tree
+    git rev-parse --show-prefix
+    git rev-parse HEAD
+    git count-objects -v
+
+Add a remote
+------------
+
+    git remote -v
+    git remote add origin URL
+    git remote get-url origin
+    git remote set-url origin URL
+    git remote rename origin upstream
+    git remote remove upstream
+
+Repository layout
+-----------------
+- .git/ stores objects, refs, index, configuration, and logs.
+- .git/HEAD identifies the current symbolic ref or detached commit.
+- .git/index is the staging area.
+- refs/heads/ contains local branch refs.
+- refs/remotes/ contains remote-tracking refs.
+
+
+4. WORKING TREE, INDEX, AND HEAD
+================================
+
+The normal change flow is:
+
+    edit files -> git add -> index -> git commit -> local history
+                                      |
+                                      +-> git push -> remote repository
+
+Three states
+------------
+- working tree: modifications not yet staged.
+- index: changes selected for the next commit.
+- repository: committed snapshots.
+
+HEAD terms
+----------
+- HEAD: current commit or symbolic reference.
+- branch: movable name pointing to a commit.
+- tag: usually a permanent name for a release commit.
+- detached HEAD: HEAD points directly to a commit rather than a branch.
+
+Check HEAD
+----------
+
+    git status
+    git symbolic-ref --short HEAD
+    git rev-parse --short HEAD
+    git show HEAD
+
+Detached HEAD recovery
+----------------------
+Create a branch before leaving the detached commit if you want to preserve work:
+
+    git switch -c save-detached-work
+
+
+5. STATUS, DIFF, AND INSPECTION
+===============================
+
+Status
+------
+
+    git status
+    git status --short
+    git status --short --branch
+    git status --porcelain=v1
+
+Short status fields
+-------------------
+The first column describes the index; the second describes the working tree.
+
+    M  file.txt    staged modification
+     M file.txt    unstaged modification
+    MM file.txt    staged and unstaged modifications
+    ?? file.txt    untracked file
+    A  file.txt    staged addition
+    D  file.txt    staged deletion
+
+Diffs
+-----
+
+    git diff
+    git diff --cached
+    git diff HEAD
+    git diff HEAD~1 HEAD
+    git diff main..feature
+    git diff main...feature
+    git diff --stat
+    git diff --name-only
+    git diff --word-diff
+
+Difference between two-dot and three-dot
+-----------------------------------------
+- A..B compares the tips of A and B.
+- A...B compares the common ancestor of A and B with B.
+- `git diff main...feature` is commonly useful for reviewing changes introduced
+  by feature relative to the common base.
+
+Show commits and files
+----------------------
+
+    git show COMMIT
+    git show --stat COMMIT
+    git show COMMIT:path/to/file
+    git log --oneline
+    git log --oneline --decorate --graph --all
+    git log --stat
+    git log -p
+    git log -- path/to/file
+
+Find who changed a line
+-----------------------
+
+    git blame path/to/file
+    git blame -L 20,40 path/to/file
+    git log -S'needle' -- path/to/file
+    git log -G'regex' -- path/to/file
+
+
+6. ADD, COMMIT, AND AMEND
+=========================
+
+Stage files
+-----------
+
+    git add file.txt
+    git add src/ config/
+    git add -A
+    git add .
+    git add -u
+    git add -p
+
+Differences
+-----------
+- `git add -A` stages additions, modifications, and deletions throughout the
+  repository.
+- `git add .` stages changes below the current directory; behavior can depend
+  on the command location and Git version.
+- `git add -u` stages modifications and deletions of tracked files.
+- `git add -p` interactively stages selected hunks.
+
+Unstage without losing file changes
+------------------------------------
+
+    git restore --staged file.txt
+    git reset HEAD -- file.txt
+
+Commit
+------
+
+    git commit -m "Add health check"
+    git commit
+    git commit -a -m "Update tracked configuration"
+
+`git commit -a` does not stage new untracked files. Stage new files explicitly.
+
+Inspect before commit
+---------------------
+
+    git diff --cached
+    git diff --check
+    git status
+
+Amend the latest commit
+-----------------------
+
+    git add corrected-file.txt
+    git commit --amend --no-edit
+    git commit --amend -m "Replace commit message"
+
+Amend changes history. Do not amend a commit that other people have based work
+on unless the team workflow explicitly permits rewriting it.
+
+
+7. BRANCHES AND SWITCHING
+=========================
+
+List branches
+-------------
+
+    git branch
+    git branch -a
+    git branch -r
+    git branch -vv
+
+Create and switch
+-----------------
+
+    git branch feature/health-check
+    git switch feature/health-check
+    git switch -c feature/health-check
+    git switch -C feature/health-check
+
+`-C` can reset an existing branch to the starting point. Use it carefully.
+
+Older equivalent commands
+--------------------------
+
+    git checkout -b feature/health-check
+    git checkout main
+
+Rename and delete
+-----------------
+
+    git branch -m old-name new-name
+    git branch -m new-name
+    git branch -d feature/health-check
+    git branch -D feature/health-check
+
+`-d` refuses to delete an unmerged branch. `-D` forces deletion of the local ref.
+
+Upstream tracking
+-----------------
+
+    git push -u origin feature/health-check
+    git branch --set-upstream-to=origin/main main
+    git branch --unset-upstream
+    git rev-parse --abbrev-ref --symbolic-full-name '@{u}'
+
+Compare branch reachability
+---------------------------
+
+    git log --oneline main..feature
+    git log --oneline feature..main
+    git merge-base main feature
+    git merge-base --is-ancestor main feature
+
+
+8. MERGE AND CONFLICT RESOLUTION
+=================================
+
+Merge a branch
+--------------
+
+    git switch main
+    git fetch origin
+    git merge feature/health-check
+
+Fast-forward and merge commits
+------------------------------
+- Fast-forward moves the branch pointer when no divergent commit exists.
+- A merge commit records two parents when histories diverged.
+- `--no-ff` creates a merge commit even when fast-forward is possible.
+
+    git merge --no-ff feature/health-check
+    git merge --ff-only origin/main
+
+Conflict state
+-------------
+
+    git status
+    git diff --name-only --diff-filter=U
+    git diff
+
+Conflict markers look like:
+
+    <<<<<<< HEAD
+    current branch content
+    =======
+    incoming branch content
+    >>>>>>> feature/health-check
+
+Resolve a conflict
+------------------
+1. Edit each conflicted file and remove the conflict markers.
+2. Test the result.
+3. Stage the resolved files.
+4. Continue the merge.
+
+    git add path/to/resolved-file
+    git diff --check
+    git commit
+
+Abort a merge
+-------------
+
+    git merge --abort
+
+Conflict helper commands
+------------------------
+
+    git checkout --ours path/to/file
+    git checkout --theirs path/to/file
+    git restore --ours path/to/file
+    git restore --theirs path/to/file
+
+These replace the file with one side. Review and stage the result; do not use
+them without understanding which side is correct.
+
+
+9. REBASE AND CONFLICT RESOLUTION
+=================================
+
+Rebase replays commits on a new base and creates new commit IDs.
+
+    git switch feature/health-check
+    git fetch origin
+    git rebase origin/main
+
+Interactive rebase
+------------------
+
+    git rebase -i HEAD~3
+
+Common interactive commands
+---------------------------
+- pick: keep the commit.
+- reword: keep changes, edit message.
+- edit: stop to amend the commit.
+- squash: combine with the previous commit and edit messages.
+- fixup: combine with the previous commit and discard this message.
+- drop: remove the commit.
+
+Resolve a rebase conflict
+-------------------------
+
+    git status
+    git diff
+    # edit files, then:
+    git add path/to/resolved-file
+    git rebase --continue
+
+Abort or skip
+-------------
+
+    git rebase --abort
+    git rebase --skip
+
+Rebase versus merge
+-------------------
+- Merge preserves the existing graph and is safer for already-published work.
+- Rebase creates a linear-looking history but rewrites commits.
+- Do not rebase shared public commits without agreement.
+- After rebasing a published feature, push with `--force-with-lease`, not plain
+  `--force`, and confirm the remote branch first.
+
+
+10. REMOTES, FETCH, PULL, AND PUSH
+==================================
+
+Remote inspection
+-----------------
+
+    git remote
+    git remote -v
+    git remote show origin
+    git ls-remote origin
+
+Fetch
+-----
+
+    git fetch origin
+    git fetch --all --prune
+    git fetch origin main
+    git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+Fetch downloads objects and updates remote-tracking refs. It does not change
+your current branch or working tree.
+
+Pull
+----
+
+    git pull
+    git pull --ff-only
+    git pull --rebase
+    git pull --no-rebase
+
+Pull is fetch followed by merge or rebase. Make the integration strategy
+explicit when the repository policy requires one.
+
+Push
+----
+
+    git push
+    git push origin main
+    git push -u origin feature/health-check
+    git push --tags
+    git push origin --delete feature/health-check
+
+Safe force update after a deliberate rebase
+--------------------------------------------
+
+    git push --force-with-lease origin feature/health-check
+
+`--force-with-lease` refuses to update if the remote ref changed unexpectedly.
+
+Prune deleted remote branches
+-----------------------------
+
+    git fetch --prune
+    git remote prune origin
+
+Remote-tracking names such as origin/main are local references updated by fetch;
+they are not live network lookups on every command.
+
+
+11. RESTORE, RESET, REVERT, AND CLEAN
+=====================================
+
+Restore working-tree content
+----------------------------
+
+    git restore file.txt
+    git restore --source=HEAD~1 file.txt
+
+Restore staged content to the working tree
+-------------------------------------------
+
+    git restore --staged file.txt
+    git restore --staged --worktree file.txt
+
+Reset modes
+-----------
+- --soft: move HEAD; keep index and working tree changes staged.
+- --mixed: move HEAD; keep working tree changes, reset index. Default.
+- --hard: move HEAD; discard tracked working tree and index changes.
+
+    git reset --soft HEAD~1
+    git reset HEAD~1
+    git reset --hard HEAD~1
+
+Revert a published commit
+-------------------------
+
+    git revert COMMIT
+    git revert --no-edit COMMIT
+    git revert --no-commit COMMIT_A COMMIT_B
+
+Revert creates a new commit that reverses an earlier commit. It is normally the
+safer operation for shared branches.
+
+Revert a merge commit
+---------------------
+
+    git revert -m 1 MERGE_COMMIT
+
+The mainline parent must be selected correctly.
+
+Clean untracked files
+---------------------
+
+    git clean -n
+    git clean -nd
+    git clean -n -x
+    git clean -fd
+    git clean -fdx
+
+`-d` includes untracked directories. `-x` includes ignored files. Always preview
+with `-n` before deleting.
+
+
+12. STASH
+=========
+
+Temporarily save work
+---------------------
+
+    git stash push -m "WIP health check"
+    git stash push --include-untracked -m "WIP with new files"
+    git stash list
+    git stash show --stat stash@{0}
+    git stash show -p stash@{0}
+
+Apply or remove a stash
+----------------------
+
+    git stash apply stash@{0}
+    git stash pop
+    git stash drop stash@{0}
+    git stash clear
+
+Create a branch from a stash
+----------------------------
+
+    git stash branch recover-work stash@{0}
+
+Prefer a commit on a temporary branch when work is important or long-lived.
+
+
+13. TAGS AND RELEASES
+=====================
+
+List and inspect tags
+--------------------
+
+    git tag
+    git tag --list 'v*'
+    git show v1.2.0
+    git describe --tags --always
+
+Create tags
+-----------
+
+    git tag v1.2.0
+    git tag -a v1.2.0 -m "Release v1.2.0"
+    git tag -a v1.2.0 COMMIT -m "Release v1.2.0"
+
+Push and delete tags
+--------------------
+
+    git push origin v1.2.0
+    git push origin --follow-tags
+    git push origin --delete v1.2.0
+    git tag -d v1.2.0
+
+Annotated tags point to tag objects containing a message, author, and target;
+lightweight tags are simple refs.
+
+
+14. CHERRY-PICK
+==============
+
+Apply a commit to the current branch
+-------------------------------------
+
+    git switch release
+    git cherry-pick COMMIT
+    git cherry-pick COMMIT_A COMMIT_B
+    git cherry-pick A..B
+
+Useful options
+--------------
+
+    git cherry-pick --no-commit COMMIT
+    git cherry-pick -x COMMIT
+
+`-x` records the source commit ID in the new commit message, useful when
+backporting between branches.
+
+Conflict handling
+-----------------
+
+    git status
+    # resolve files
+    git add path/to/file
+    git cherry-pick --continue
+    git cherry-pick --abort
+    git cherry-pick --quit
+
+
+15. REFLOG AND RECOVERY
+=======================
+
+Reflog records where local refs and HEAD pointed over time.
+
+    git reflog
+    git reflog show main
+    git log --oneline --all --reflog
+
+Recover a lost commit
+---------------------
+1. Find the old commit in the reflog.
+2. Inspect it.
+3. Create a branch pointing to it.
+
+    git reflog
+    git show OLD_HASH
+    git switch -c recovered-work OLD_HASH
+
+Reflogs are local and expire according to repository maintenance settings. Push
+important recovered work to a remote after verifying it.
+
+
+16. BISECT
+==========
+
+Bisect performs a binary search over commits to find the first bad one.
+
+    git bisect start
+    git bisect bad
+    git bisect good KNOWN_GOOD_COMMIT
+
+At each checkout, run a test. Mark the result:
+
+    git bisect good
+    git bisect bad
+
+Finish
+------
+
+    git bisect log
+    git bisect reset
+
+Automate when the test exits 0 for good and nonzero for bad:
+
+    git bisect run ./test-script.sh
+
+
+17. IGNORE RULES AND ATTRIBUTES
+===============================
+
+Ignore file locations
+---------------------
+- .gitignore: committed repository rules.
+- .git/info/exclude: local repository-only rules.
+- global excludes file: user-wide rules.
+
+Common .gitignore entries
+-------------------------
+
+    .env
+    .env.*
+    __pycache__/
+    *.py[cod]
+    node_modules/
+    .venv/
+    dist/
+    build/
+    *.log
+    .terraform/
+    terraform.tfstate
+    terraform.tfstate.*
+
+Inspect ignore decisions
+------------------------
+
+    git check-ignore -v path/to/file
+    git status --ignored
+
+If a tracked file matches a new ignore rule, untrack it without deleting it:
+
+    git rm --cached path/to/file
+
+Attributes
+----------
+Use .gitattributes for line endings, diff drivers, binary files, and merge
+behavior. Examples:
+
+    *.sh text eol=lf
+    *.png binary
+    *.lock linguist-generated
+
+Inspect attributes
+-----------------
+
+    git check-attr -a -- path/to/file
+
+
+18. WORKTREES AND SUBMODULES
+============================
+
+Worktrees
+---------
+Use multiple working directories backed by one repository, useful for a hotfix
+and feature branch at the same time.
+
+    git worktree list
+    git worktree add ../hotfix hotfix
+    git worktree add -b feature/new ../feature-new main
+    git worktree remove ../hotfix
+    git worktree prune
+
+Submodules
+----------
+
+    git submodule status
+    git submodule add URL path/to/dependency
+    git submodule update --init --recursive
+    git submodule update --remote --merge
+    git submodule deinit path/to/dependency
+    git submodule sync --recursive
+
+A submodule is a separate repository recorded by a commit ID in the parent
+repository. Clone with:
+
+    git clone --recurse-submodules URL
+
+
+19. HOOKS AND AUTOMATION
+========================
+
+Hooks are executable programs in .git/hooks or a configured hooks path.
+
+List and inspect hooks
+----------------------
+
+    ls -la .git/hooks
+    git config --get core.hooksPath
+
+Common hooks
+------------
+- pre-commit: validate or format before a commit is created.
+- commit-msg: validate commit messages.
+- pre-push: run checks before sending commits.
+- post-checkout: react to branch/worktree changes.
+- post-merge: update generated or dependency state if required.
+
+Configure a shared hooks directory
+-----------------------------------
+
+    git config core.hooksPath .githooks
+    chmod +x .githooks/pre-commit
+
+Do not bypass hooks with --no-verify unless the task explicitly requires it and
+you understand which checks are being skipped.
+
+
+20. SIGNING AND VERIFICATION
+============================
+
+Inspect signature support
+-------------------------
+
+    git log --show-signature -1
+    git show --show-signature COMMIT
+    git tag -v v1.2.0
+
+Configure signing only with an approved key and repository policy. Never copy a
+private signing key into a repository or assessment workspace.
+
+===============================================================================
+                             END OF REFERENCE
+===============================================================================

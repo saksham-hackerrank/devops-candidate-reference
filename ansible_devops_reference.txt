@@ -1,0 +1,1168 @@
+===============================================================================
+                        ANSIBLE DEVOPS REFERENCE
+===============================================================================
+
+Use built-in documentation in the candidate environment:
+
+    ansible --help
+    ansible-playbook --help
+    ansible-doc --list
+    ansible-doc MODULE_NAME
+    ansible-doc -s MODULE_NAME
+    ansible-inventory --help
+
+
+CONTENTS
+========
+
+  1.  Installation, help, and versions
+  2.  Inventory and host patterns
+  3.  Ad hoc commands
+  4.  Playbook structure
+  5.  Tasks and modules
+  6.  Variables and facts
+  7.  Conditionals and tests
+  8.  Loops and iteration
+  9.  Registers and changed status
+  10. Handlers and notifications
+  11. Files, templates, and line editing
+  12. Packages, services, and users
+  13. Privilege escalation
+  14. Delegation, serial, and rolling changes
+  15. Blocks, rescue, and always
+  16. Includes, imports, and roles
+  17. Vault and secret handling
+  18. Configuration and execution controls
+  19. Error handling and idempotency
+  20. Common modules and syntax patterns
+
+
+1. INSTALLATION, HELP, AND VERSIONS
+===================================
+
+    ansible --version
+    ansible-playbook --version
+    ansible-galaxy --version
+    ansible-config list
+    ansible-config dump --only-changed
+    python3 -m ansible --version
+
+Help and module documentation
+-----------------------------
+
+    ansible --help
+    ansible-playbook --help
+    ansible-doc --list | less
+    ansible-doc ansible.builtin.copy
+    ansible-doc -s ansible.builtin.copy
+    ansible-doc --list | grep service
+
+Collection-qualified module names are preferred:
+
+    ansible.builtin.package
+    ansible.builtin.service
+    ansible.builtin.template
+
+List installed collections
+--------------------------
+
+    ansible-galaxy collection list
+    ansible-galaxy role list
+
+
+2. INVENTORY AND HOST PATTERNS
+==============================
+
+INI inventory
+------------
+
+    [web]
+    web01 ansible_host=192.0.2.10
+    web02 ansible_host=192.0.2.11
+
+    [db]
+    db01 ansible_host=192.0.2.20
+
+    [production:children]
+    web
+    db
+
+YAML inventory
+--------------
+
+    all:
+      children:
+        web:
+          hosts:
+            web01:
+              ansible_host: 192.0.2.10
+            web02:
+              ansible_host: 192.0.2.11
+        db:
+          hosts:
+            db01:
+              ansible_host: 192.0.2.20
+
+Inventory variables
+-------------------
+
+    [web:vars]
+    http_port=8080
+    ansible_user=ubuntu
+
+    [web]
+    web01 ansible_host=192.0.2.10 http_port=8080
+
+Inventory commands
+------------------
+
+    ansible-inventory -i inventory.ini --list
+    ansible-inventory -i inventory.ini --graph
+    ansible-inventory -i inventory.ini --host web01
+
+Choose an inventory file
+------------------------
+
+    ansible all -i inventory.ini --list-hosts
+    ansible-playbook -i inventory.ini site.yml
+    ansible-playbook -i inventory/production site.yml
+
+Host patterns
+-------------
+
+    all
+    '*'
+    web
+    web01
+    web:db
+    web:&production
+    web:!web02
+    'web[0:1]'
+
+List target hosts without executing tasks
+------------------------------------------
+
+    ansible web -i inventory.ini --list-hosts
+    ansible all -i inventory.ini --list-hosts
+
+Connection variables
+--------------------
+
+    ansible_host: 192.0.2.10
+    ansible_user: ubuntu
+    ansible_port: 22
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+    ansible_connection: ssh
+    ansible_python_interpreter: /usr/bin/python3
+
+Use a private key through an approved secure mechanism; do not commit it.
+
+
+3. AD HOC COMMANDS
+===================
+
+Basic form
+----------
+
+    ansible PATTERN -i INVENTORY -m MODULE -a 'ARGUMENTS'
+
+Connectivity check
+------------------
+
+    ansible all -i inventory.ini -m ansible.builtin.ping
+    ansible web -i inventory.ini -m ansible.builtin.ping
+
+Gather facts
+------------
+
+    ansible all -i inventory.ini -m ansible.builtin.setup
+    ansible web -i inventory.ini -m ansible.builtin.setup -a 'filter=ansible_distribution*'
+
+Run commands
+------------
+
+    ansible web -i inventory.ini -m ansible.builtin.command -a 'uptime'
+    ansible web -i inventory.ini -m ansible.builtin.shell -a 'df -h | sort -k5'
+    ansible web -i inventory.ini -m ansible.builtin.shell -a 'systemctl is-active nginx'
+
+The command module does not process shell operators such as |, >, &&, or
+variable expansion. Use shell only when such behavior is required.
+
+Manage packages and services
+----------------------------
+
+    ansible web -i inventory.ini -b -m ansible.builtin.package -a 'name=nginx state=present'
+    ansible web -i inventory.ini -b -m ansible.builtin.service -a 'name=nginx state=started enabled=true'
+
+Copy a file
+----------
+
+    ansible web -i inventory.ini -b -m ansible.builtin.copy \
+      -a 'src=./index.html dest=/var/www/html/index.html mode=0644'
+
+Ad hoc flags
+------------
+
+    -i FILE              inventory
+    -m MODULE            module
+    -a 'ARGS'            module arguments
+    -b, --become        privilege escalation
+    -u USER              remote user
+    -l SUBSET            limit hosts
+    -f FORKS             parallel workers
+    -o                   one-line output
+    -v, -vv, -vvv, -vvvv  increase verbosity
+    --check               check mode
+    --diff                show file differences where supported
+
+
+4. PLAYBOOK STRUCTURE
+=====================
+
+Minimal playbook
+---------------
+
+    ---
+    - name: Configure web servers
+      hosts: web
+      become: true
+      gather_facts: true
+      tasks:
+      - name: Install nginx
+        ansible.builtin.package:
+          name: nginx
+          state: present
+      - name: Ensure nginx is running
+        ansible.builtin.service:
+          name: nginx
+          state: started
+          enabled: true
+
+Run a playbook
+--------------
+
+    ansible-playbook -i inventory.ini site.yml
+    ansible-playbook -i inventory.ini site.yml --check
+    ansible-playbook -i inventory.ini site.yml --diff
+    ansible-playbook -i inventory.ini site.yml -v
+    ansible-playbook -i inventory.ini site.yml --syntax-check
+    ansible-playbook -i inventory.ini site.yml --list-tasks
+    ansible-playbook -i inventory.ini site.yml --list-tags
+    ansible-playbook -i inventory.ini site.yml --list-hosts
+
+Limit execution
+---------------
+
+    ansible-playbook -i inventory.ini site.yml --limit web01
+    ansible-playbook -i inventory.ini site.yml --limit 'web:!web02'
+
+Select tasks
+------------
+
+    ansible-playbook -i inventory.ini site.yml --tags deploy
+    ansible-playbook -i inventory.ini site.yml --skip-tags restart
+
+Tags can be assigned to tasks, blocks, plays, roles, and imports. Always list
+the selected tasks before running a narrow execution on shared systems.
+
+Multiple plays
+--------------
+
+    ---
+    - name: Configure web tier
+      hosts: web
+      tasks:
+      - name: Web task
+        ansible.builtin.debug:
+          msg: "web host"
+
+    - name: Configure database tier
+      hosts: db
+      tasks:
+      - name: Database task
+        ansible.builtin.debug:
+          msg: "database host"
+
+
+5. TASKS AND MODULES
+====================
+
+Task anatomy
+------------
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: /opt/example
+        state: directory
+        owner: app
+        group: app
+        mode: '0755'
+      notify: Restart application
+
+Module arguments are YAML keys under the module name. Do not mix shell-style
+arguments and YAML mappings in the same task unless the module supports it.
+
+Built-in module help
+--------------------
+
+    ansible-doc ansible.builtin.file
+    ansible-doc ansible.builtin.template
+    ansible-doc ansible.builtin.systemd_service
+    ansible-doc ansible.builtin.uri
+    ansible-doc ansible.builtin.assert
+
+FQCN notation
+-------------
+
+    ansible.builtin.copy
+    ansible.builtin.template
+    ansible.posix.authorized_key
+
+Use a module's documented fully qualified collection name when collections may
+contain similarly named modules.
+
+Common task controls
+--------------------
+
+    changed_when: false
+    failed_when: result.rc != 0
+    register: result
+    when: condition
+    loop: "{{ items }}"
+    become: true
+    ignore_errors: true
+    notify: Restart service
+    tags: [deploy]
+
+Avoid `ignore_errors` unless the failure is understood and safe to ignore.
+
+
+6. VARIABLES AND FACTS
+======================
+
+Define and use variables
+------------------------
+
+    vars:
+      app_name: example
+      app_port: 8080
+    tasks:
+    - name: Show configuration
+      ansible.builtin.debug:
+        msg: "{{ app_name }} listens on {{ app_port }}"
+
+Common variable locations
+-------------------------
+- group_vars/all.yml
+- group_vars/web.yml
+- host_vars/web01.yml
+- play vars
+- vars_files
+- role defaults and vars
+- registered variables
+- extra vars passed with -e
+
+Load a vars file
+----------------
+
+    vars_files:
+    - vars/common.yml
+    - vars/{{ deployment_environment }}.yml
+
+Extra variables
+---------------
+
+    ansible-playbook -i inventory.ini site.yml -e 'deployment_environment=staging'
+    ansible-playbook -i inventory.ini site.yml -e '@vars/staging.yml'
+
+Extra vars have very high precedence. Do not use them to hide configuration
+mistakes; validate required values explicitly.
+
+Facts
+-----
+
+    ansible_facts['distribution']
+    ansible_facts['distribution_major_version']
+    ansible_facts['os_family']
+    ansible_facts['hostname']
+    ansible_facts['default_ipv4']['address']
+    ansible_facts['processor_vcpus']
+    ansible_facts['memtotal_mb']
+
+    - name: Show operating system
+      ansible.builtin.debug:
+        var: ansible_facts['distribution']
+
+Disable or limit facts
+----------------------
+
+    gather_facts: false
+
+    - name: Gather only selected facts
+      ansible.builtin.setup:
+        gather_subset:
+        - '!all'
+        - min
+
+Facts are collected per host at play start unless disabled.
+
+
+7. CONDITIONALS AND TESTS
+==========================
+
+Basic conditionals
+------------------
+
+    - name: Install Debian package
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Run only in production
+      ansible.builtin.debug:
+        msg: "production"
+      when: deployment_environment | default('dev') == 'production'
+
+Multiple conditions
+-------------------
+
+    when:
+    - ansible_facts['os_family'] == 'Debian'
+    - app_enabled | bool
+
+    when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+
+Tests and filters
+-----------------
+
+    when: result is defined
+    when: result is succeeded
+    when: result is failed
+    when: result is changed
+    when: result is skipped
+    when: app_port is number
+    when: config_file is exists
+    when: item is match('^web')
+    when: my_list | length > 0
+    when: user_name | default('') | length > 0
+
+Truthy values
+-------------
+Use explicit conversion when a value comes from YAML, inventory, or an
+environment variable:
+
+    when: feature_enabled | bool
+    when: replicas | int >= 2
+
+Conditionals on a task with a loop apply once per item:
+
+    loop: "{{ packages }}"
+    when: item.state == 'present'
+
+
+8. LOOPS AND ITERATION
+======================
+
+Simple loop
+-----------
+
+    vars:
+      packages:
+      - nginx
+      - curl
+      - git
+    tasks:
+    - name: Install packages
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ packages }}"
+
+Loop over mappings
+------------------
+
+    vars:
+      users:
+      - name: alice
+        groups: app
+      - name: bob
+        groups: app
+    tasks:
+    - name: Create users
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        groups: "{{ item.groups }}"
+        append: true
+        state: present
+      loop: "{{ users }}"
+
+Loop controls
+-------------
+
+    loop_control:
+      label: "{{ item.name }}"
+      index_var: item_index
+      loop_var: package_item
+
+    loop: "{{ packages }}"
+    loop_control:
+      loop_var: package_item
+    when: package_item != 'telnet'
+
+Register loop output
+--------------------
+
+    - name: Check files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+      - /etc/app.conf
+      - /etc/app.conf.d
+      register: file_checks
+
+    - name: Show results
+      ansible.builtin.debug:
+        var: file_checks.results
+
+Use `ansible-doc` for the current syntax of `loop`, `until`, and module-specific
+loop behavior.
+
+
+9. REGISTERS AND CHANGED STATUS
+===============================
+
+Register a result
+-----------------
+
+    - name: Check application endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/health
+        status_code: 200
+      register: health_result
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if unhealthy
+      ansible.builtin.fail:
+        msg: "Application health check failed"
+      when: health_result.status | default(0) != 200
+
+Common registered fields
+------------------------
+
+    result.rc
+    result.stdout
+    result.stdout_lines
+    result.stderr
+    result.failed
+    result.changed
+    result.skipped
+    result.results
+
+Control changed status
+----------------------
+
+    - name: Query current version
+      ansible.builtin.command: /usr/local/bin/app --version
+      register: version_result
+      changed_when: false
+
+    - name: Run migration only when needed
+      ansible.builtin.command: /usr/local/bin/app migrate
+      when: version_result.stdout is not search('schema-v2')
+
+Use changed_when and failed_when to describe the actual semantics of commands,
+not merely to silence output.
+
+
+10. HANDLERS AND NOTIFICATIONS
+==============================
+
+Handler example
+---------------
+
+    tasks:
+    - name: Deploy nginx configuration
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        mode: '0644'
+      notify: Validate and restart nginx
+
+    handlers:
+    - name: Validate and restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
+Handlers run after the normal tasks in a play. Multiple notifications of the
+same handler normally result in one handler execution.
+
+Flush handlers early
+--------------------
+
+    - name: Run pending handlers now
+      ansible.builtin.meta: flush_handlers
+
+Listen to a shared event
+------------------------
+
+    handlers:
+    - name: Restart web service
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+      listen: restart web stack
+
+    tasks:
+    - name: Update configuration
+      ansible.builtin.copy:
+        src: app.conf
+        dest: /etc/app.conf
+      notify: restart web stack
+
+Validate before replacing a file
+---------------------------------
+
+    - name: Install configuration after validation
+      ansible.builtin.template:
+        src: app.conf.j2
+        dest: /etc/app.conf
+        validate: '/usr/local/bin/app-config-check %s'
+      notify: Restart application
+
+
+11. FILES, TEMPLATES, AND LINE EDITING
+======================================
+
+Create a directory
+------------------
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: /opt/app
+        state: directory
+        owner: app
+        group: app
+        mode: '0755'
+
+Copy a file
+----------
+
+    - name: Copy static configuration
+      ansible.builtin.copy:
+        src: files/app.conf
+        dest: /etc/app.conf
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+
+Copy inline content
+-------------------
+
+    - name: Write a marker
+      ansible.builtin.copy:
+        content: "managed by ansible\n"
+        dest: /etc/managed-by-ansible
+        mode: '0644'
+
+Template file
+-------------
+
+Template file: templates/app.conf.j2
+
+    port = {{ app_port }}
+    environment = {{ deployment_environment | default('dev') }}
+    {% if feature_enabled | default(false) | bool %}
+    feature_x = enabled
+    {% endif %}
+
+Task:
+
+    - name: Render application configuration
+      ansible.builtin.template:
+        src: app.conf.j2
+        dest: /etc/app/app.conf
+        owner: app
+        group: app
+        mode: '0640'
+      notify: Restart application
+
+Line editing
+------------
+
+    - name: Ensure setting exists
+      ansible.builtin.lineinfile:
+        path: /etc/app.conf
+        regexp: '^PORT='
+        line: 'PORT=8080'
+        create: true
+        mode: '0644'
+
+    - name: Replace a managed block
+      ansible.builtin.blockinfile:
+        path: /etc/app.conf
+        marker: '# {mark} ANSIBLE MANAGED BLOCK'
+        block: |
+          FEATURE_A=true
+          FEATURE_B=false
+
+Find files and directories
+--------------------------
+
+    - name: Find old logs
+      ansible.builtin.find:
+        paths: /var/log/app
+        patterns: '*.log'
+        age: 7d
+        recurse: true
+      register: old_logs
+
+
+12. PACKAGES, SERVICES, AND USERS
+=================================
+
+Package manager abstraction
+---------------------------
+
+    - name: Install packages
+      ansible.builtin.package:
+        name:
+        - curl
+        - git
+        - nginx
+        state: present
+
+Debian/Ubuntu packages
+----------------------
+
+    - name: Update apt cache and install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Remove package
+      ansible.builtin.apt:
+        name: telnet
+        state: absent
+        purge: true
+
+Red Hat family packages
+-----------------------
+
+    - name: Install package
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+
+Service management
+------------------
+
+    - name: Ensure service is enabled and running
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Restart service
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: restarted
+        daemon_reload: true
+
+Users and groups
+----------------
+
+    - name: Create application group
+      ansible.builtin.group:
+        name: app
+        state: present
+
+    - name: Create application user
+      ansible.builtin.user:
+        name: app
+        group: app
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+SSH authorized keys
+-------------------
+
+    - name: Install authorized key
+      ansible.posix.authorized_key:
+        user: app
+        state: present
+        key: "{{ lookup('file', 'files/app.pub') }}"
+
+
+13. PRIVILEGE ESCALATION
+========================
+
+Become for a play or task
+-------------------------
+
+    - name: Configure servers
+      hosts: web
+      become: true
+      tasks:
+      - name: Write root-owned file
+        ansible.builtin.copy:
+          content: "managed\n"
+          dest: /etc/managed.conf
+          mode: '0644'
+
+    - name: Run one privileged task
+      ansible.builtin.command: id
+      become: true
+
+Choose the become method and user through inventory or approved command flags:
+
+    ansible-playbook -i inventory.ini site.yml -b
+    ansible-playbook -i inventory.ini site.yml --become-user=root
+
+Become passwords should be supplied through a secure prompt or secret mechanism,
+not committed files.
+
+
+14. DELEGATION, SERIAL, AND ROLLING CHANGES
+============================================
+
+Delegate to localhost
+---------------------
+
+    - name: Register deployment marker locally
+      ansible.builtin.copy:
+        content: "{{ inventory_hostname }}\n"
+        dest: /tmp/last-deployed-host
+      delegate_to: localhost
+      run_once: true
+
+Run once
+--------
+
+    - name: Update a shared endpoint
+      ansible.builtin.uri:
+        url: http://control.example/api/deploy
+        method: POST
+      delegate_to: localhost
+      run_once: true
+
+Rolling deployment
+------------------
+
+    - name: Update web servers in batches
+      hosts: web
+      serial: 2
+      max_fail_percentage: 25
+      tasks:
+      - name: Deploy application
+        ansible.builtin.copy:
+          src: files/app
+          dest: /opt/app/app
+          mode: '0755'
+        notify: Restart application
+
+`serial` limits the number of hosts processed at a time. Combine it with health
+checks and a load balancer drain procedure for real rolling deployments.
+
+
+15. BLOCKS, RESCUE, AND ALWAYS
+==============================
+
+    - name: Controlled deployment
+      block:
+      - name: Deploy release
+        ansible.builtin.command: /opt/app/deploy --version {{ release_version }}
+      - name: Run smoke test
+        ansible.builtin.uri:
+          url: http://127.0.0.1:8080/health
+          status_code: 200
+      rescue:
+      - name: Roll back release
+        ansible.builtin.command: /opt/app/deploy --rollback
+      always:
+      - name: Record deployment attempt
+        ansible.builtin.lineinfile:
+          path: /var/log/app-deployments.log
+          line: "{{ ansible_date_time.iso8601 }} {{ release_version }}"
+          create: true
+
+`rescue` handles a failed task in the block; `always` runs whether the block
+succeeds or fails. A rescued block can still affect the final play result if a
+rescue task fails.
+
+
+16. INCLUDES, IMPORTS, AND ROLES
+================================
+
+Include versus import
+---------------------
+- import_tasks is static; tasks are loaded during playbook parsing.
+- include_tasks is dynamic; tasks are loaded while the play runs.
+- import_role and include_role follow the same static/dynamic distinction.
+
+    - import_tasks: tasks/common.yml
+    - include_tasks: tasks/{{ task_file }}.yml
+
+Include variables
+-----------------
+
+    - name: Configure platform
+      ansible.builtin.include_tasks: "tasks/{{ ansible_facts['os_family'] | lower }}.yml"
+
+Role layout
+-----------
+
+    roles/web/
+    roles/web/tasks/main.yml
+    roles/web/handlers/main.yml
+    roles/web/templates/app.conf.j2
+    roles/web/files/index.html
+    roles/web/vars/main.yml
+    roles/web/defaults/main.yml
+    roles/web/meta/main.yml
+
+Use a role
+---------
+
+    - name: Configure web tier
+      hosts: web
+      become: true
+      roles:
+      - role: web
+        vars:
+          web_port: 8080
+
+Role commands
+-------------
+
+    ansible-galaxy init roles/web
+    ansible-galaxy role list
+    ansible-playbook -i inventory.ini site.yml --list-tasks
+
+Defaults are intended to be overridden. Role vars are higher precedence and
+should be used sparingly.
+
+
+17. VAULT AND SECRET HANDLING
+=============================
+
+Create and inspect an encrypted file
+-------------------------------------
+
+    ansible-vault create group_vars/production/vault.yml
+    ansible-vault edit group_vars/production/vault.yml
+    ansible-vault view group_vars/production/vault.yml
+    ansible-vault encrypt vars/secrets.yml
+    ansible-vault decrypt vars/secrets.yml
+    ansible-vault rekey group_vars/production/vault.yml
+
+Run with Vault
+--------------
+
+    ansible-playbook -i inventory.ini site.yml --ask-vault-pass
+    ansible-playbook -i inventory.ini site.yml --vault-id @prompt
+    ansible-playbook -i inventory.ini site.yml --vault-password-file vault-pass.sh
+
+Do not print secret variables
+-----------------------------
+
+    - name: Use a secret without logging it
+      ansible.builtin.uri:
+        url: https://service.example/api
+        method: POST
+        body:
+          token: "{{ api_token }}"
+        body_format: json
+      no_log: true
+
+`no_log: true` prevents task output from exposing values, but use it narrowly so
+useful diagnostics remain visible.
+
+
+18. CONFIGURATION AND EXECUTION CONTROLS
+=========================================
+
+Find the active configuration
+-----------------------------
+
+    ansible-config view
+    ansible-config dump --only-changed
+    ansible --version
+
+Common configuration settings
+-----------------------------
+
+    [defaults]
+    inventory = ./inventory.ini
+    remote_user = ubuntu
+    forks = 10
+    interpreter_python = auto_silent
+    host_key_checking = True
+    retry_files_enabled = False
+
+Avoid disabling host key checking as a blanket fix. Validate SSH host keys
+through the environment's approved process.
+
+Connection options
+------------------
+
+    ansible-playbook -i inventory.ini site.yml -u ubuntu
+    ansible-playbook -i inventory.ini site.yml --private-key ~/.ssh/id_ed25519
+    ansible-playbook -i inventory.ini site.yml -T 20
+    ansible-playbook -i inventory.ini site.yml -f 20
+
+Check mode and diff
+-------------------
+
+    ansible-playbook -i inventory.ini site.yml --check
+    ansible-playbook -i inventory.ini site.yml --check --diff
+
+Check mode is advisory; modules may not fully support prediction. Read module
+documentation before relying on a check result.
+
+
+19. ERROR HANDLING AND IDEMPOTENCY
+==================================
+
+Idempotent patterns
+-------------------
+- package state=present
+- service state=started enabled=true
+- file state=directory
+- copy/template with deterministic content
+- user state=present
+- lineinfile with a specific regexp and line
+
+Avoid repeated command changes
+-------------------------------
+
+    - name: Run one-time initialization
+      ansible.builtin.command: /opt/app/init-db
+      args:
+        creates: /var/lib/app/.initialized
+
+    - name: Run command when a marker is absent
+      ansible.builtin.command: /opt/app/migrate
+      args:
+        creates: /var/lib/app/.schema-v2
+
+Retry until a condition
+----------------------
+
+    - name: Wait for application
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/health
+        status_code: 200
+      register: health
+      until: health.status == 200
+      retries: 12
+      delay: 5
+      changed_when: false
+
+Explicit failure
+----------------
+
+    - name: Validate required variable
+      ansible.builtin.assert:
+        that:
+        - app_port is defined
+        - app_port | int > 0
+        - app_port | int < 65536
+        fail_msg: "app_port must be a valid TCP port"
+
+Stop or continue after failure
+------------------------------
+
+    any_errors_fatal: true
+    max_fail_percentage: 25
+    ignore_unreachable: true
+    ignore_errors: true
+
+Use error controls only when their operational effect is intended.
+
+
+20. COMMON MODULES AND SYNTAX PATTERNS
+======================================
+
+Command and shell
+-----------------
+
+    - name: Check version without reporting a change
+      ansible.builtin.command: /usr/local/bin/app --version
+      register: version
+      changed_when: false
+
+    - name: Run a shell pipeline
+      ansible.builtin.shell: set -o pipefail && cat /var/log/app.log | grep ERROR
+      args:
+        executable: /bin/bash
+      register: errors
+      changed_when: false
+      failed_when: errors.rc not in [0, 1]
+
+URI and HTTP
+------------
+
+    - name: Check endpoint
+      ansible.builtin.uri:
+        url: https://app.example/health
+        method: GET
+        return_content: true
+        status_code: [200, 204]
+      register: response
+      changed_when: false
+
+Archive
+-------
+
+    - name: Extract release
+      ansible.builtin.unarchive:
+        src: files/app.tar.gz
+        dest: /opt/app
+        remote_src: false
+        owner: app
+        group: app
+
+    - name: Download archive
+      ansible.builtin.get_url:
+        url: https://download.example/app.tar.gz
+        dest: /tmp/app.tar.gz
+        mode: '0644'
+        checksum: sha256:CHECKSUM
+
+Facts and debug
+---------------
+
+    - name: Show variables during development
+      ansible.builtin.debug:
+        msg:
+        - "host={{ inventory_hostname }}"
+        - "ip={{ ansible_facts['default_ipv4']['address'] | default('unknown') }}"
+
+    - name: Show a variable
+      ansible.builtin.debug:
+        var: app_config
+
+File metadata
+-------------
+
+    - name: Check file
+      ansible.builtin.stat:
+        path: /etc/app.conf
+      register: app_file
+
+    - name: Remove file
+      ansible.builtin.file:
+        path: /tmp/old-file
+        state: absent
+
+===============================================================================
+                             END OF REFERENCE
+===============================================================================

@@ -1,0 +1,725 @@
+===============================================================================
+                       DOCKER DEVOPS REFERENCE
+===============================================================================
+
+Use built-in help for the installed version:
+
+    docker --help
+    docker <command> --help
+    docker system info
+    docker version
+
+
+CONTENTS
+========
+
+  1.  Engine, CLI, images, and containers
+  2.  Installation and context checks
+  3.  Image search, pull, inspect, and history
+  4.  Run containers
+  5.  Container lifecycle
+  6.  Logs, exec, inspect, and processes
+  7.  Ports and networking
+  8.  Volumes and bind mounts
+  9.  Environment variables and secrets
+  10. Dockerfile syntax
+  11. Build, tag, and push images
+  12. Multi-stage builds and image optimization
+  13. Health checks and lifecycle
+  14. Resource limits and restart policies
+  15. Docker Compose
+  16. Registries and authentication
+
+
+1. ENGINE, CLI, IMAGES, AND CONTAINERS
+======================================
+
+Core vocabulary
+---------------
+- Docker client: command-line interface issuing API requests.
+- Docker daemon/engine: builds images and manages containers, networks, and
+  volumes.
+- Image: read-only layered filesystem plus configuration.
+- Container: runtime instance of an image.
+- Registry: stores and distributes images.
+- Repository: image name in a registry, commonly registry/org/name.
+- Tag: mutable human-readable image label such as 1.28 or latest.
+- Digest: content-addressed immutable identifier such as sha256:....
+- Volume: Docker-managed persistent storage.
+- Bind mount: host path mounted into a container.
+
+Command shape
+-------------
+
+    docker [OPTIONS] COMMAND
+    docker COMMAND [OPTIONS] [ARG...]
+
+Common commands
+---------------
+
+    docker run
+    docker ps
+    docker images
+    docker build
+    docker pull
+    docker push
+    docker logs
+    docker exec
+    docker inspect
+    docker network
+    docker volume
+    docker compose
+    docker system
+
+
+2. INSTALLATION AND CONTEXT CHECKS
+==================================
+
+Verify the CLI and daemon
+-------------------------
+
+    docker --version
+    docker version
+    docker info
+    docker system info
+
+If the client cannot reach the daemon, check that the engine is running and
+that DOCKER_HOST or the active context is correct.
+
+Contexts
+--------
+
+    docker context ls
+    docker context show
+    docker context inspect default
+    docker context use default
+
+Environment variables
+---------------------
+
+    printenv DOCKER_HOST
+    printenv DOCKER_CONTEXT
+    printenv DOCKER_CONFIG
+
+Unset an accidental context override for the current shell:
+
+    unset DOCKER_HOST DOCKER_CONTEXT
+
+Help
+----
+
+    docker --help
+    docker run --help
+    docker build --help
+    docker compose --help
+    docker inspect --help
+
+
+3. IMAGE SEARCH, PULL, INSPECT, AND HISTORY
+===========================================
+
+Search and pull
+---------------
+
+    docker search nginx
+    docker pull nginx:1.27
+    docker pull ubuntu:24.04
+    docker pull REPOSITORY@sha256:DIGEST
+
+List images
+-----------
+
+    docker image ls
+    docker images
+    docker image ls --all
+    docker image ls --filter reference='nginx:*'
+    docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}'
+
+Inspect an image
+---------------
+
+    docker image inspect nginx:1.27
+    docker image inspect --format '{{.Config.Cmd}}' nginx:1.27
+    docker image inspect --format '{{.Os}}/{{.Architecture}}' nginx:1.27
+    docker image inspect --format '{{json .Config.Env}}' nginx:1.27
+
+Image history and metadata
+-------------------------
+
+    docker image history nginx:1.27
+    docker image history --no-trunc IMAGE
+    docker image inspect IMAGE --format '{{.RootFS.Layers}}'
+
+Remove or retag images
+----------------------
+
+    docker image tag IMAGE registry.example.com/team/app:1.0
+    docker image rm IMAGE
+    docker rmi IMAGE
+
+An image cannot normally be removed while a container depends on it. Stop and
+remove the relevant containers or use the exact cleanup operation intended.
+
+
+4. RUN CONTAINERS
+=================
+
+Run in the foreground
+---------------------
+
+    docker run --name web nginx:1.27
+    docker run --rm busybox:1.36 echo hello
+    docker run --rm -it ubuntu:24.04 bash
+    docker run --rm -it alpine:3.20 sh
+
+Run detached
+------------
+
+    docker run -d --name web nginx:1.27
+    docker run -d --name api --restart unless-stopped IMAGE
+
+Useful run options
+------------------
+
+    --name NAME             assign a stable name
+    -d, --detach            run in background
+    -it                     interactive terminal
+    --rm                    remove container after exit
+    -e KEY=value            set an environment variable
+    --env-file FILE         load environment variables
+    -p HOST:CONTAINER       publish a port
+    -P                      publish exposed ports randomly
+    -v VOLUME:/path         mount a named volume
+    -v HOST:/path           bind mount a host path
+    --mount ...             explicit mount syntax
+    --network NETWORK       connect to a Docker network
+    --hostname NAME         set container hostname
+    --entrypoint CMD        override image entrypoint
+    --user UID:GID          run as a user
+    --read-only             read-only root filesystem
+    --workdir /path         set working directory
+    --init                  use an init process
+    --health-cmd CMD        configure a health check
+    --restart POLICY        configure restart behavior
+
+Override command and arguments
+------------------------------
+
+    docker run --rm IMAGE echo hello
+    docker run --rm IMAGE sh -c 'echo start; sleep 5'
+    docker run --rm --entrypoint sh IMAGE -c 'id; pwd'
+
+The image ENTRYPOINT and CMD are combined according to image configuration.
+--entrypoint replaces ENTRYPOINT; arguments after IMAGE replace or supply CMD.
+
+
+5. CONTAINER LIFECYCLE
+======================
+
+List containers
+---------------
+
+    docker ps
+    docker ps -a
+    docker ps -q
+    docker ps --filter status=running
+    docker ps --filter name=web
+    docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+
+Start, stop, restart, and remove
+---------------------------------
+
+    docker start web
+    docker stop web
+    docker restart web
+    docker pause web
+    docker unpause web
+    docker kill web
+    docker rm web
+    docker rm -f web
+
+Stop sends the configured stop signal and waits before forcefully terminating;
+kill terminates immediately by default. Prefer graceful stop for applications.
+
+Exit codes
+----------
+
+    docker inspect web --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}'
+
+Common meanings: 0 usually means success; 1 is a generic application error;
+126 means found but not executable; 127 means command not found; 137 often
+indicates SIGKILL, including possible OOM termination; 143 often indicates
+SIGTERM. Inspect the application and state rather than relying only on the code.
+
+
+6. LOGS, EXEC, INSPECT, AND PROCESSES
+=====================================
+
+Logs
+----
+
+    docker logs web
+    docker logs --tail 100 web
+    docker logs --since 10m web
+    docker logs -f web
+    docker logs -t web
+
+Execute a command
+-----------------
+
+    docker exec -it web sh
+    docker exec -it web bash
+    docker exec web env
+    docker exec web ps
+    docker exec web sh -c 'ls -la /usr/share/nginx/html'
+
+Use sh when bash is not installed.
+
+Inspect runtime state
+---------------------
+
+    docker inspect web
+    docker inspect --format '{{json .NetworkSettings.Networks}}' web
+    docker inspect --format '{{.Mounts}}' web
+    docker inspect --format '{{.Config.Image}}' web
+    docker inspect --format '{{.State.Health.Status}}' web
+
+Container processes and resource usage
+---------------------------------------
+
+    docker top web
+    docker stats
+    docker stats --no-stream
+    docker stats web
+
+Copy files
+----------
+
+    docker cp ./local.txt web:/tmp/local.txt
+    docker cp web:/var/log/app.log ./app.log
+
+
+7. PORTS AND NETWORKING
+=======================
+
+Port publishing
+---------------
+
+    docker run -d --name web -p 8080:80 nginx:1.27
+    docker run -d --name web -p 127.0.0.1:8080:80 nginx:1.27
+    docker port web
+
+HOST:CONTAINER means requests to the host port are forwarded to the container
+port. Binding to 127.0.0.1 prevents direct access through external interfaces.
+
+List and inspect networks
+-------------------------
+
+    docker network ls
+    docker network inspect bridge
+    docker network create app-net
+    docker network create --driver bridge app-net
+
+Connect containers
+------------------
+
+    docker run -d --name db --network app-net redis:7.4
+    docker run --rm -it --network app-net busybox:1.36 sh
+    docker network connect app-net web
+    docker network disconnect app-net web
+    docker network rm app-net
+
+Containers on a user-defined bridge network can resolve other containers by
+name. A container should connect to a service by its network name and internal
+container port, not its host-published port.
+
+Network troubleshooting
+-----------------------
+
+    docker inspect web --format '{{json .NetworkSettings.Networks}}'
+    docker port web
+    docker exec web cat /etc/resolv.conf
+    docker run --rm --network app-net busybox:1.36 nslookup db
+
+
+8. VOLUMES AND BIND MOUNTS
+==========================
+
+Named volumes
+-------------
+
+    docker volume ls
+    docker volume create app-data
+    docker volume inspect app-data
+    docker run -d --name db -v app-data:/var/lib/data IMAGE
+    docker volume rm app-data
+
+Explicit mount syntax
+---------------------
+
+    docker run --mount type=volume,src=app-data,dst=/var/lib/data IMAGE
+    docker run --mount type=bind,src="$PWD",dst=/workspace IMAGE
+    docker run --mount type=bind,src="$PWD",dst=/workspace,readonly IMAGE
+
+Short syntax
+------------
+
+    docker run -v app-data:/var/lib/data IMAGE
+    docker run -v "$PWD":/workspace IMAGE
+    docker run -v "$PWD":/workspace:ro IMAGE
+
+Volume backup pattern
+---------------------
+
+    docker run --rm \
+      -v app-data:/data:ro \
+      -v "$PWD":/backup \
+      busybox:1.36 tar czf /backup/app-data.tgz -C /data .
+
+Bind mounts use host paths and are useful for development. Named volumes are
+usually preferable for application data managed by Docker.
+
+
+9. ENVIRONMENT VARIABLES AND SECRETS
+====================================
+
+Set environment variables
+--------------------------
+
+    docker run --rm -e APP_MODE=dev IMAGE env
+    docker run --rm --env-file .env IMAGE
+    docker inspect CONTAINER --format '{{json .Config.Env}}'
+
+An environment variable can be visible through process inspection and Docker
+metadata. Do not treat it as a secure secret store.
+
+Build arguments
+---------------
+
+    docker build --build-arg VERSION=1.0 -t app:1.0 .
+
+ARG values can be recorded in image history or build metadata. Do not pass
+secrets through ARG or ENV during a build. Use the approved build secret
+mechanism and avoid copying secret material into image layers.
+
+Docker login
+------------
+
+    docker login REGISTRY
+    docker logout REGISTRY
+
+Prefer interactive or stdin-based credential input where supported rather than
+putting a password in shell history.
+
+
+10. DOCKERFILE SYNTAX
+=====================
+
+Minimal Dockerfile
+------------------
+
+    # syntax=docker/dockerfile:1
+    FROM python:3.12-slim
+    WORKDIR /app
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . .
+    EXPOSE 8080
+    USER 10001
+    CMD ["python", "app.py"]
+
+Common instructions
+-------------------
+- FROM: base image; may appear multiple times for multi-stage builds.
+- ARG: build-time variable; not available at runtime unless copied to ENV.
+- ENV: runtime environment variable baked into image configuration.
+- WORKDIR: working directory for later instructions and runtime.
+- COPY: copies files from the build context or another stage.
+- ADD: supports extra behaviors; prefer COPY unless ADD is required.
+- RUN: executes a build-time command in a new layer.
+- USER: default runtime user for subsequent instructions and the container.
+- EXPOSE: documents intended ports; does not publish them.
+- ENTRYPOINT: primary executable.
+- CMD: default arguments or command.
+- HEALTHCHECK: defines container health behavior.
+- LABEL: metadata.
+- VOLUME: declares a mount point; prefer explicit runtime volume configuration.
+
+COPY versus ADD
+---------------
+COPY is predictable for local files. ADD has archive extraction and URL
+semantics that can make builds less obvious; use it only intentionally.
+
+ENTRYPOINT and CMD examples
+---------------------------
+
+    ENTRYPOINT ["python", "-m", "http.server"]
+    CMD ["8080"]
+
+Exec form is preferred for signal handling. Shell form runs through a shell and
+can change signal and environment behavior.
+
+Build context and .dockerignore
+--------------------------------
+The build context is the directory sent to the builder. Keep it small and
+exclude secrets, Git history, dependencies, caches, and generated output.
+
+    .git
+    .gitignore
+    .env*
+    .venv
+    node_modules
+    __pycache__
+    *.log
+    dist
+    build
+
+Dockerfile variables
+--------------------
+
+    ARG BASE_TAG=3.12-slim
+    FROM python:${BASE_TAG}
+    ARG APP_VERSION
+    LABEL org.opencontainers.image.version=${APP_VERSION}
+
+
+11. BUILD, TAG, AND PUSH IMAGES
+===============================
+
+Build
+-----
+
+    docker build -t app:1.0 .
+    docker build -f Dockerfile.prod -t app:prod .
+    docker build --no-cache -t app:clean .
+    docker build --progress=plain -t app:debug .
+
+Tag for a registry
+------------------
+
+    docker tag app:1.0 REGISTRY/ORG/app:1.0
+    docker tag app:1.0 REGISTRY/ORG/app:latest
+
+Push and pull
+-------------
+
+    docker login REGISTRY
+    docker push REGISTRY/ORG/app:1.0
+    docker pull REGISTRY/ORG/app:1.0
+
+Verify the image
+----------------
+
+    docker image inspect REGISTRY/ORG/app:1.0
+    docker run --rm REGISTRY/ORG/app:1.0 --version
+
+Build metadata and cache
+------------------------
+Docker reuses unchanged layers. Place infrequently changing dependency files
+before frequently changing source files:
+
+    COPY package*.json ./
+    RUN npm ci
+    COPY . .
+
+Use `--no-cache` for a clean diagnostic build, not as the default optimization.
+
+
+12. MULTI-STAGE BUILDS AND IMAGE OPTIMIZATION
+=============================================
+
+Multi-stage example
+-------------------
+
+    # syntax=docker/dockerfile:1
+    FROM golang:1.23 AS builder
+    WORKDIR /src
+    COPY go.mod go.sum ./
+    RUN go mod download
+    COPY . .
+    RUN CGO_ENABLED=0 GOOS=linux go build -o /out/app ./cmd/app
+
+    FROM gcr.io/distroless/static-debian12
+    COPY --from=builder /out/app /app
+    USER nonroot:nonroot
+    ENTRYPOINT ["/app"]
+
+Benefits
+--------
+- Build tools and source do not need to be present in the runtime image.
+- Smaller images reduce transfer time and attack surface.
+- Named stages can be selected with `--target`.
+
+    docker build --target builder -t app:builder .
+
+Optimization checklist
+----------------------
+[ ] Use a small appropriate base image.
+[ ] Pin important base image versions or digests.
+[ ] Add a useful .dockerignore.
+[ ] Order layers to maximize cache reuse.
+[ ] Combine related package install and cleanup operations where appropriate.
+[ ] Use multi-stage builds.
+[ ] Run as a non-root user.
+[ ] Do not install unnecessary tools in production images.
+[ ] Scan the image using the approved scanner.
+
+
+13. HEALTH CHECKS AND LIFECYCLE
+===============================
+
+Dockerfile health check
+-----------------------
+
+    HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+      CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+
+Runtime health check
+--------------------
+
+    docker run -d --name api \
+      --health-cmd='wget -qO- http://127.0.0.1:8080/health || exit 1' \
+      --health-interval=10s \
+      --health-timeout=3s \
+      --health-retries=3 \
+      IMAGE
+
+Inspect health
+--------------
+
+    docker inspect --format '{{.State.Health.Status}}' api
+    docker inspect --format '{{json .State.Health}}' api
+
+Health is distinct from process state. A running container can be unhealthy;
+an unhealthy container is not automatically restarted unless an orchestrator or
+external policy acts on that status.
+
+
+14. RESOURCE LIMITS AND RESTART POLICIES
+========================================
+
+CPU and memory
+--------------
+
+    docker run -d --name api --cpus=1.0 --memory=512m IMAGE
+    docker update --cpus=2 --memory=1g api
+    docker stats --no-stream api
+
+Other limits
+------------
+
+    docker run --pids-limit=100 --read-only IMAGE
+    docker run --tmpfs /tmp:rw,noexec,nosuid,size=64m IMAGE
+
+Restart policies
+----------------
+- no: do not automatically restart; default.
+- on-failure[:N]: restart after nonzero exit, optionally capped.
+- always: restart regardless of exit status.
+- unless-stopped: restart unless explicitly stopped.
+
+    docker run -d --restart=unless-stopped --name api IMAGE
+    docker update --restart=on-failure:5 api
+
+Graceful stop
+-------------
+
+    docker stop --time=30 api
+    docker kill --signal=SIGTERM api
+
+The application should handle SIGTERM and exit cleanly within the grace period.
+
+
+15. DOCKER COMPOSE
+==================
+
+Compose groups services, networks, volumes, and configuration in one YAML file.
+Check whether the environment uses the `docker compose` plugin or a legacy
+`docker-compose` command.
+
+Compose commands
+----------------
+
+    docker compose version
+    docker compose config
+    docker compose config --quiet
+    docker compose up
+    docker compose up -d
+    docker compose up --build
+    docker compose ps
+    docker compose logs
+    docker compose logs -f api
+    docker compose exec api sh
+    docker compose run --rm api sh
+    docker compose stop
+    docker compose restart api
+    docker compose down
+    docker compose down -v
+
+`down -v` removes named volumes declared for the Compose project. Use it only
+when data deletion is intended.
+
+Compose example
+---------------
+
+    services:
+      api:
+        build: .
+        ports:
+        - "8080:8080"
+        environment:
+          APP_MODE: development
+        depends_on:
+        - db
+        networks:
+        - app-net
+      db:
+        image: postgres:16
+        environment:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: change-me
+          POSTGRES_DB: appdb
+        volumes:
+        - db-data:/var/lib/postgresql/data
+        networks:
+        - app-net
+    networks:
+      app-net:
+    volumes:
+      db-data:
+
+Use an env file or approved secret mechanism instead of committing real
+credentials. `depends_on` controls startup ordering but does not by itself mean
+the dependency is ready to accept traffic; add health checks and application
+retry logic when readiness matters.
+
+
+16. REGISTRIES AND AUTHENTICATION
+=================================
+
+Registry image names
+--------------------
+
+    REGISTRY/ORG/IMAGE:TAG
+    REGISTRY/ORG/IMAGE@sha256:DIGEST
+
+Examples:
+
+    registry.example.com/platform/api:1.4.0
+    registry.example.com/platform/api@sha256:...
+
+Inspect registry-related configuration
+--------------------------------------
+
+    docker info
+    docker system info
+    docker login REGISTRY
+    docker logout REGISTRY
+
+Use private registry credentials only in the approved credential store. Image
+pull credentials in an orchestrator are configured separately from local Docker
+login in many environments.
+
+===============================================================================
+                             END OF REFERENCE
+===============================================================================
