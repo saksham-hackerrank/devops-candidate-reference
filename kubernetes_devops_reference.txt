@@ -1,0 +1,2120 @@
+===============================================================================
+                    KUBERNETES (K8S) DEVOPS REFERENCE
+===============================================================================
+
+CONTENTS
+========
+
+  1.  Mental model and object vocabulary
+  2.  kubectl fundamentals
+  3.  Contexts and namespaces
+  4.  Inspecting resources
+  5.  YAML and declarative management
+  6.  Pods
+  7.  Deployments and ReplicaSets
+  8.  Jobs and CronJobs
+  9.  Services and service discovery
+  10. Ingress and Gateway API
+  11. ConfigMaps and Secrets
+  12. Volumes, PVCs, and StatefulSets
+  13. DaemonSets
+  14. Labels, selectors, and annotations
+  15. Scheduling and node management
+  16. Probes, lifecycle, and graceful shutdown
+  17. Resource requests, limits, and quotas
+  18. Security, RBAC, and service accounts
+  19. NetworkPolicy
+  20. Autoscaling
+  21. Rollouts, updates, and rollbacks
+  22. Logs, exec, port-forward, copy, and debugging
+  23. Cluster and node troubleshooting
+  24. Common failure states
+  25. JSONPath, custom columns, and output filters
+  26. Patching and imperative shortcuts
+  27. Helm and Kustomize basics
+  28. Useful shell recipes
+  29. Complete practice manifests
+
+
+1. OBJECT VOCABULARY
+=====================================
+
+Control plane
+-------------
+- kube-apiserver: HTTP API entry point for Kubernetes.
+- etcd: strongly consistent key-value store for cluster state.
+- kube-scheduler: assigns unscheduled Pods to suitable nodes.
+- kube-controller-manager: runs controllers such as Deployment and Job.
+- cloud-controller-manager: integrates with a cloud provider when present.
+
+Node components
+--------------
+- kubelet: runs and monitors Pods on a node.
+- container runtime: runs containers, commonly containerd or CRI-O.
+- kube-proxy: implements Service networking rules when used by the cluster.
+- CNI plugin: provides Pod networking.
+
+
+2. KUBECTL FUNDAMENTALS
+=======================
+
+Check installation and client/server versions
+-----------------------------------------------
+
+    kubectl version --client
+    kubectl version
+    kubectl cluster-info
+
+Basic command form
+------------------
+
+    kubectl [command] [TYPE] [NAME] [flags]
+
+Examples
+--------
+
+    kubectl get pods
+    kubectl get pod api-7d9f8c6d4f-abc12
+    kubectl describe pod api-7d9f8c6d4f-abc12
+    kubectl delete pod api-7d9f8c6d4f-abc12
+
+Resource name forms
+-------------------
+
+    kubectl get pod
+    kubectl get pods
+    kubectl get po
+    kubectl get deployment
+    kubectl get deploy
+    kubectl get service
+    kubectl get svc
+    kubectl get persistentvolumeclaim
+    kubectl get pvc
+
+Frequently used flags
+----------------------
+
+    -n, --namespace NAME       use a namespace
+    -A, --all-namespaces       use every namespace
+    --context NAME             use a named context
+    -o wide                    include extra columns
+    -o yaml                    print the full object as YAML
+    -o json                    print JSON
+    -o name                    print resource names only
+    --show-labels              show labels
+    -l, --selector SELECTOR    filter by labels
+    --field-selector SELECTOR  filter by fields where supported
+    --sort-by=JSONPATH         sort output
+    -w, --watch                watch for changes
+    --dry-run=client           create output without contacting the server
+    --dry-run=server           ask the API server to validate without persisting
+    -f, --filename FILE        read a manifest or directory
+    --recursive                recursively process a directory
+
+Built-in help and schema discovery
+-----------------------------------
+
+    kubectl help
+    kubectl help get
+    kubectl explain pod
+    kubectl explain pod.spec
+    kubectl explain pod.spec.containers
+    kubectl explain deployment.spec.strategy --recursive
+    kubectl api-resources
+    kubectl api-versions
+
+The explain command is especially useful in a terminal assessment:
+
+    kubectl explain service.spec.ports
+    kubectl explain networkpolicy.spec --recursive
+
+
+3. CONTEXTS AND NAMESPACES
+==========================
+
+Inspect the active connection
+-----------------------------
+
+    kubectl config current-context
+    kubectl config get-contexts
+    kubectl config view
+    kubectl config view --minify
+    kubectl config view --minify -o jsonpath='{.contexts[0].context.namespace}'
+
+Change context
+--------------
+
+    kubectl config use-context dev-cluster
+    kubectl config set-context dev-cluster --namespace=staging
+
+Use a namespace for one command
+-------------------------------
+
+    kubectl get pods -n staging
+    kubectl get pods --context dev-cluster -n staging
+
+Create and inspect namespaces
+-----------------------------
+
+    kubectl create namespace staging
+    kubectl get namespaces
+    kubectl get ns staging -o yaml
+    kubectl describe namespace staging
+    kubectl delete namespace staging
+
+The namespace deletion is asynchronous. Objects in the namespace may be
+removed, and a namespace stuck in Terminating usually has finalizers to debug.
+
+Set the current context's default namespace
+--------------------------------------------
+
+    kubectl config set-context --current --namespace=staging
+
+
+4. INSPECTING RESOURCES
+=======================
+
+List resources
+--------------
+
+    kubectl get all
+    kubectl get all -n staging
+    kubectl get pods -A
+    kubectl get pods -o wide
+    kubectl get deployments,services,ingresses
+    kubectl get pods --show-labels
+
+Namespaced versus cluster-scoped
+---------------------------------
+
+    kubectl api-resources --namespaced=true
+    kubectl api-resources --namespaced=false
+
+Describe a resource
+-------------------
+
+    kubectl describe pod POD_NAME
+    kubectl describe deployment DEPLOYMENT_NAME
+    kubectl describe node NODE_NAME
+    kubectl describe service SERVICE_NAME
+
+Get complete YAML or JSON
+--------------------------
+
+    kubectl get pod POD_NAME -o yaml
+    kubectl get deployment DEPLOYMENT_NAME -o yaml
+    kubectl get pod POD_NAME -o json
+
+Events
+------
+
+    kubectl get events --sort-by=.lastTimestamp
+    kubectl get events -A --sort-by=.metadata.creationTimestamp
+    kubectl get events --field-selector involvedObject.name=POD_NAME
+    kubectl describe pod POD_NAME
+
+The Events section of describe output often reveals image-pull errors, failed
+scheduling, mount errors, probe failures, and admission policy violations.
+
+Compare desired and observed state
+-----------------------------------
+
+    kubectl get deployment APP -o wide
+    kubectl rollout status deployment/APP
+    kubectl get rs -l app=APP
+    kubectl get pods -l app=APP --show-labels
+    kubectl get pod POD -o jsonpath='{.status.phase}{"\n"}'
+
+Server-side resource usage, if metrics-server is installed
+-----------------------------------------------------------
+
+    kubectl top nodes
+    kubectl top pods
+    kubectl top pods -A --sort-by=cpu
+    kubectl top pods -A --sort-by=memory
+
+
+5. YAML AND DECLARATIVE MANAGEMENT
+===================================
+
+A typical manifest has four top-level fields:
+
+    apiVersion: the API group and version
+    kind:       the resource type
+    metadata:   name, namespace, labels, annotations
+    spec:       desired state
+
+Apply, validate, and remove manifests
+--------------------------------------
+
+    kubectl apply -f app.yaml
+    kubectl apply -f ./manifests/
+    kubectl apply -R -f ./manifests/
+    kubectl apply --dry-run=client -f app.yaml
+    kubectl apply --dry-run=server -f app.yaml
+    kubectl diff -f app.yaml
+    kubectl delete -f app.yaml
+
+Show the last-applied configuration when available
+---------------------------------------------------
+
+    kubectl apply view-last-applied deployment/APP
+
+Generate starter YAML without writing it to the cluster
+--------------------------------------------------------
+
+    kubectl create deployment web --image=nginx --dry-run=client -o yaml
+    kubectl expose deployment web --port=80 --target-port=80 \
+        --type=ClusterIP --dry-run=client -o yaml
+    kubectl run test-pod --image=busybox:1.36 --restart=Never \
+        --dry-run=client -o yaml -- echo hello
+
+Multiple documents in one file
+------------------------------
+Separate documents with a line containing exactly three hyphens:
+
+    ---
+
+Apply only the object that you need when debugging. A manifest can contain a
+Deployment, Service, ConfigMap, and other objects as separate documents.
+
+YAML reminders
+--------------
+- Strings containing special characters should be quoted.
+- A list uses a dash at the same indentation level.
+- metadata.namespace matters for namespaced objects.
+- selectors must match Pod labels exactly where a selector is required.
+- apiVersion and field names are case-sensitive.
+- Do not copy status, resourceVersion, uid, managedFields, or creationTimestamp
+  from live output into a hand-written desired-state manifest.
+
+
+6. PODS
+=======
+
+Run and inspect a temporary Pod
+-------------------------------
+
+    kubectl run tmp --image=busybox:1.36 --restart=Never -- sleep 3600
+    kubectl get pod tmp -o wide
+    kubectl describe pod tmp
+    kubectl delete pod tmp
+
+Pod lifecycle phases
+--------------------
+- Pending: accepted but not yet running; check scheduling and image pulls.
+- Running: at least one container is running or starting.
+- Succeeded: all containers exited successfully.
+- Failed: all containers exited and at least one failed.
+- Unknown: state could not be obtained, often node communication related.
+
+Minimal Pod manifest
+--------------------
+
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: web-pod
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.27
+        ports:
+        - name: http
+          containerPort: 80
+
+Multi-container Pod pattern
+----------------------------
+Containers in one Pod share the Pod network namespace and can communicate over
+localhost. They are scheduled together and share declared volumes.
+
+    spec:
+      containers:
+      - name: app
+        image: busybox:1.36
+        command: ["sh", "-c"]
+        args: ["while true; do date; sleep 30; done"]
+      - name: sidecar
+        image: busybox:1.36
+        command: ["sh", "-c"]
+        args: ["tail -f /shared/app.log"]
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+      volumes:
+      - name: shared
+        emptyDir: {}
+
+Container command versus arguments
+-----------------------------------
+- image ENTRYPOINT is replaced by spec.containers[].command.
+- image CMD is replaced by spec.containers[].args.
+- command and args are arrays; shell syntax needs a shell explicitly.
+
+    command: ["sh", "-c"]
+    args: ["echo start; sleep 3600"]
+
+Container state and restart policy
+-----------------------------------
+
+    kubectl get pod POD -o jsonpath='{.status.containerStatuses[*].state}'
+    kubectl get pod POD -o jsonpath='{.status.containerStatuses[*].restartCount}{"\n"}'
+
+Pod restartPolicy is Always, OnFailure, or Never. Deployments normally use
+Always. Jobs normally use Never or OnFailure.
+
+
+7. DEPLOYMENTS AND REPLICASETS
+==============================
+
+Create and inspect a Deployment
+--------------------------------
+
+    kubectl create deployment web --image=nginx:1.27 --replicas=3
+    kubectl get deployment web
+    kubectl get rs -l app=web
+    kubectl get pods -l app=web -o wide
+    kubectl describe deployment web
+
+Deployment manifest
+-------------------
+
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: web
+      labels:
+        app: web
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: web
+      template:
+        metadata:
+          labels:
+            app: web
+        spec:
+          containers:
+          - name: web
+            image: nginx:1.27
+            ports:
+            - name: http
+              containerPort: 80
+
+The Deployment selector must match the Pod template labels. The selector is
+immutable for a Deployment after creation.
+
+Scale
+-----
+
+    kubectl scale deployment/web --replicas=5
+    kubectl get deployment web --watch
+
+Update an image
+---------------
+
+    kubectl set image deployment/web web=nginx:1.28
+    kubectl rollout status deployment/web
+    kubectl rollout history deployment/web
+
+Pause and resume a rollout
+---------------------------
+
+    kubectl rollout pause deployment/web
+    kubectl set image deployment/web web=nginx:1.28
+    kubectl set env deployment/web FEATURE_FLAG=true
+    kubectl rollout resume deployment/web
+
+Rollback
+--------
+
+    kubectl rollout undo deployment/web
+    kubectl rollout undo deployment/web --to-revision=2
+    kubectl rollout history deployment/web
+
+Rolling update controls
+-----------------------
+
+    spec:
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
+          maxSurge: 1
+
+maxUnavailable controls how many desired replicas can be unavailable during an
+update. maxSurge controls how many extra Pods can exist above the desired count.
+Values can be integers or percentages.
+
+Recreate strategy
+-----------------
+
+    spec:
+      strategy:
+        type: Recreate
+
+This terminates existing Pods before creating replacement Pods. It can be useful
+when two versions must not run at the same time, but it causes downtime.
+
+
+8. JOBS AND CRONJOBS
+====================
+
+Job commands
+------------
+
+    kubectl create job hello --image=busybox:1.36 -- echo hello
+    kubectl get jobs
+    kubectl get pods -l job-name=hello
+    kubectl logs job/hello
+    kubectl delete job hello
+
+Job manifest
+------------
+
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: data-task
+    spec:
+      backoffLimit: 3
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: task
+            image: busybox:1.36
+            command: ["sh", "-c"]
+            args: ["echo processing; sleep 10; echo complete"]
+
+Useful Job fields
+-----------------
+- completions: number of successful Pod completions required.
+- parallelism: maximum number of Pods running at once.
+- backoffLimit: retries before the Job is marked failed.
+- activeDeadlineSeconds: maximum time allowed for the Job.
+- ttlSecondsAfterFinished: optional cleanup delay after completion.
+
+    spec:
+      completions: 5
+      parallelism: 2
+      backoffLimit: 4
+      activeDeadlineSeconds: 600
+
+CronJob manifest
+----------------
+
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: nightly-task
+    spec:
+      schedule: "0 2 * * *"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 1
+      jobTemplate:
+        spec:
+          backoffLimit: 2
+          template:
+            spec:
+              restartPolicy: OnFailure
+              containers:
+              - name: task
+                image: busybox:1.36
+                command: ["sh", "-c"]
+                args: ["date; echo nightly run"]
+
+Cron schedule fields are minute, hour, day-of-month, month, day-of-week.
+Always quote the schedule in YAML.
+
+
+9. SERVICES AND SERVICE DISCOVERY
+=================================
+
+Service types
+-------------
+- ClusterIP: internal virtual IP; default type.
+- NodePort: exposes a port on each node; useful for simple external access.
+- LoadBalancer: asks an external integration to provision a load balancer.
+- ExternalName: DNS CNAME-style indirection; it does not create a proxy.
+
+Create a Service
+----------------
+
+    kubectl expose deployment web --name=web --port=80 --target-port=80
+    kubectl get services
+    kubectl get endpoints web
+    kubectl get endpointslices -l kubernetes.io/service-name=web
+    kubectl describe service web
+
+Service manifest
+----------------
+
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: web
+    spec:
+      type: ClusterIP
+      selector:
+        app: web
+      ports:
+      - name: http
+        port: 80
+        targetPort: http
+        protocol: TCP
+
+port is the Service port. targetPort is the port on the selected Pod. A named
+targetPort must match a named container port. The Service selector must match
+the actual Pod labels or the Service will have no endpoints.
+
+NodePort example
+----------------
+
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: web-nodeport
+    spec:
+      type: NodePort
+      selector:
+        app: web
+      ports:
+      - port: 80
+        targetPort: 80
+        nodePort: 30080
+
+Headless Service
+----------------
+
+    spec:
+      clusterIP: None
+      selector:
+        app: database
+      ports:
+      - name: db
+        port: 5432
+        targetPort: 5432
+
+A headless Service does not allocate a virtual IP. DNS returns the individual
+Pod addresses, commonly for StatefulSet discovery.
+
+DNS names
+---------
+
+Within the same namespace:
+
+    http://SERVICE_NAME:SERVICE_PORT
+
+Across namespaces:
+
+    http://SERVICE_NAME.NAMESPACE.svc.cluster.local:SERVICE_PORT
+
+For a Service named web in namespace staging, a Pod can usually resolve:
+
+    web
+    web.staging
+    web.staging.svc
+    web.staging.svc.cluster.local
+
+Service troubleshooting
+-----------------------
+
+    kubectl get service web -o yaml
+    kubectl get endpoints web -o yaml
+    kubectl get endpointslices -l kubernetes.io/service-name=web
+    kubectl get pods -l app=web --show-labels
+
+If endpoints are empty, compare the Service selector with the Pod labels.
+
+
+10. INGRESS AND GATEWAY API
+===========================
+
+Ingress requires an Ingress controller. Creating an Ingress object alone does
+not install a controller or a load balancer.
+
+Check controllers and classes
+-----------------------------
+
+    kubectl get ingressclass
+    kubectl get ingress -A
+    kubectl describe ingress web
+
+Ingress manifest
+----------------
+
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: web
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: /
+    spec:
+      ingressClassName: nginx
+      rules:
+      - host: app.example.com
+        http:
+          paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+
+Common pathType values
+----------------------
+- Exact: exact path match.
+- Prefix: path-prefix match.
+- ImplementationSpecific: controller-defined behavior.
+
+TLS example
+-----------
+
+    spec:
+      tls:
+      - hosts:
+        - app.example.com
+        secretName: app-tls
+
+The Secret must contain tls.crt and tls.key, normally created with:
+
+    kubectl create secret tls app-tls \
+        --cert=server.crt --key=server.key
+
+Gateway API note
+----------------
+Gateway API uses GatewayClass, Gateway, and HTTPRoute objects. Availability
+depends on the Gateway API implementation installed in the cluster. Check:
+
+    kubectl api-resources | grep -i gateway
+    kubectl get gatewayclass
+    kubectl get gateway -A
+    kubectl get httproute -A
+
+
+11. CONFIGMAPS AND SECRETS
+==========================
+
+ConfigMap commands
+------------------
+
+    kubectl create configmap app-config \
+        --from-literal=LOG_LEVEL=info \
+        --from-literal=FEATURE_X=true
+    kubectl create configmap app-files --from-file=./config/
+    kubectl get configmap app-config -o yaml
+
+Use ConfigMap as environment variables
+---------------------------------------
+
+    envFrom:
+    - configMapRef:
+        name: app-config
+
+Use selected keys
+-----------------
+
+    env:
+    - name: LOG_LEVEL
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: LOG_LEVEL
+
+Mount ConfigMap as files
+-------------------------
+
+    volumeMounts:
+    - name: config
+      mountPath: /etc/app
+      readOnly: true
+    volumes:
+    - name: config
+      configMap:
+        name: app-config
+
+Secret commands
+---------------
+
+    kubectl create secret generic app-secret \
+        --from-literal=DB_USER=app \
+        --from-literal=DB_PASSWORD='change-me'
+    kubectl create secret generic registry \
+        --from-file=.dockerconfigjson=$HOME/.docker/config.json \
+        --type=kubernetes.io/dockerconfigjson
+    kubectl get secret app-secret -o yaml
+
+Secret values in YAML are base64-encoded, not automatically encrypted:
+
+    printf '%s' 'change-me' | base64
+    printf '%s' 'Y2hhbmdlLW1l' | base64 --decode
+
+Do not put real credentials in a shared manifest or commit them to Git. In
+production, use an appropriate secret-management and encryption-at-rest
+strategy.
+
+Inject a Secret into a Pod
+--------------------------
+
+    envFrom:
+    - secretRef:
+        name: app-secret
+
+or:
+
+    env:
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: app-secret
+          key: DB_PASSWORD
+
+Mount a Secret as files
+-----------------------
+
+    volumeMounts:
+    - name: secret-volume
+      mountPath: /var/run/secrets/app
+      readOnly: true
+    volumes:
+    - name: secret-volume
+      secret:
+        secretName: app-secret
+
+After changing a ConfigMap or Secret, applications may need a restart unless
+they consume a mounted volume and the application reloads the changed file.
+
+
+12. VOLUMES, PVCS, AND STATEFULSETS
+===================================
+
+Ephemeral volume types
+----------------------
+- emptyDir: starts empty for a Pod and is deleted when the Pod is removed.
+- configMap: exposes ConfigMap data as files.
+- secret: exposes Secret data as files.
+- projected: combines ConfigMap, Secret, downward API, and service account data.
+- hostPath: uses node filesystem; risky and usually avoided for applications.
+
+Inspect storage
+---------------
+
+    kubectl get storageclass
+    kubectl get pv
+    kubectl get pvc -A
+    kubectl describe pvc CLAIM_NAME
+    kubectl describe pv PV_NAME
+
+PVC manifest
+------------
+
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: app-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: standard
+
+Common access modes
+-------------------
+- ReadWriteOnce (RWO): mounted read-write by one node.
+- ReadOnlyMany (ROX): mounted read-only by many nodes.
+- ReadWriteMany (RWX): mounted read-write by many nodes.
+- ReadWriteOncePod (RWOP): mounted read-write by one Pod.
+
+The actual supported modes depend on the storage backend.
+
+Use a PVC in a Pod
+------------------
+
+    volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: app-data
+    containers:
+    - name: app
+      image: busybox:1.36
+      command: ["sh", "-c"]
+      args: ["echo data > /data/ready; sleep 3600"]
+      volumeMounts:
+      - name: data
+        mountPath: /data
+
+StatefulSet essentials
+----------------------
+- Stable Pod names: database-0, database-1, database-2.
+- Stable network identity usually comes from a headless Service.
+- volumeClaimTemplates create one PVC per StatefulSet Pod.
+- Pods are normally created and terminated in order, depending on policy.
+
+StatefulSet example
+-------------------
+
+    apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: database
+    spec:
+      serviceName: database
+      replicas: 2
+      selector:
+        matchLabels:
+          app: database
+      template:
+        metadata:
+          labels:
+            app: database
+        spec:
+          containers:
+          - name: database
+            image: redis:7.4
+            ports:
+            - name: redis
+              containerPort: 6379
+            volumeMounts:
+            - name: data
+              mountPath: /data
+      volumeClaimTemplates:
+      - metadata:
+          name: data
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+
+StatefulSet commands
+--------------------
+
+    kubectl get statefulset database
+    kubectl get pods -l app=database
+    kubectl get pvc -l app=database
+    kubectl delete pod database-0
+
+Deleting a StatefulSet does not automatically delete its PVCs in every
+workflow; inspect and clean storage deliberately.
+
+
+13. DAEMONSETS
+=============
+
+A DaemonSet ensures that a Pod runs on all or selected eligible nodes.
+Typical uses are log collectors, node monitoring, and storage/network agents.
+
+    kubectl get daemonsets -A
+    kubectl describe daemonset AGENT
+    kubectl get pods -l app=AGENT -o wide
+
+DaemonSet skeleton
+------------------
+
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: node-agent
+    spec:
+      selector:
+        matchLabels:
+          app: node-agent
+      template:
+        metadata:
+          labels:
+            app: node-agent
+        spec:
+          containers:
+          - name: agent
+            image: busybox:1.36
+            command: ["sh", "-c"]
+            args: ["while true; do sleep 3600; done"]
+
+DaemonSet update and status
+---------------------------
+
+    kubectl rollout status daemonset/node-agent
+    kubectl rollout history daemonset/node-agent
+    kubectl rollout undo daemonset/node-agent
+
+
+14. LABELS, SELECTORS, AND ANNOTATIONS
+======================================
+
+Labels identify and group resources. Selectors choose resources by labels.
+Annotations store non-identifying metadata for tools and controllers.
+
+Add, change, and remove labels
+-------------------------------
+
+    kubectl label pod POD app=web
+    kubectl label pod POD environment=staging --overwrite
+    kubectl label pod POD environment-
+
+Add and remove annotations
+--------------------------
+
+    kubectl annotate deployment/web owner=platform
+    kubectl annotate deployment/web owner-
+
+Selector examples
+-----------------
+
+    kubectl get pods -l app=web
+    kubectl get pods -l 'app in (web,api)'
+    kubectl get pods -l 'environment!=production'
+    kubectl get pods -l app,environment
+    kubectl get pods -l app=web,environment=staging
+
+Common recommended labels
+-------------------------
+
+    app.kubernetes.io/name: web
+    app.kubernetes.io/instance: web-staging
+    app.kubernetes.io/version: "1.28"
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: checkout
+    app.kubernetes.io/managed-by: kubectl
+
+Never use a changing version label in a Service selector unless you intend the
+Service to select only that version. A Service usually selects stable labels
+such as app and component.
+
+
+15. SCHEDULING AND NODE MANAGEMENT
+==================================
+
+Inspect nodes
+-------------
+
+    kubectl get nodes
+    kubectl get nodes -o wide
+    kubectl describe node NODE_NAME
+    kubectl get node NODE_NAME --show-labels
+
+Cordoning and draining
+----------------------
+
+    kubectl cordon NODE_NAME
+    kubectl drain NODE_NAME --ignore-daemonsets --delete-emptydir-data
+    kubectl uncordon NODE_NAME
+
+Drain is disruptive. Review PodDisruptionBudgets, local data, DaemonSets, and
+replica capacity first. In an assessment, use flags only when the task calls
+for them and understand that --delete-emptydir-data removes ephemeral data.
+
+Node labels and taints
+----------------------
+
+    kubectl label node NODE_NAME workload=infra
+    kubectl taint nodes NODE_NAME dedicated=infra:NoSchedule
+    kubectl taint nodes NODE_NAME dedicated=infra:NoSchedule-
+
+Taint effects
+-------------
+- NoSchedule: new Pods are not scheduled unless they tolerate the taint.
+- PreferNoSchedule: scheduler tries to avoid the node.
+- NoExecute: evicts running Pods that do not tolerate the taint.
+
+Node selector
+-------------
+
+    spec:
+      nodeSelector:
+        workload: infra
+
+Node affinity
+-------------
+
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - infra
+
+Toleration
+----------
+
+    spec:
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: infra
+        effect: NoSchedule
+
+Toleration allows a Pod onto a tainted node; it does not force placement there.
+
+Pod anti-affinity and topology spread
+--------------------------------------
+
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: web
+
+
+16. PROBES, LIFECYCLE, AND GRACEFUL SHUTDOWN
+============================================
+
+Probe types
+-----------
+- startupProbe: gives a slow-starting container time to initialize.
+- readinessProbe: controls whether a Pod receives Service traffic.
+- livenessProbe: restarts a container that is considered unhealthy.
+
+Probe example
+-------------
+
+    startupProbe:
+      httpGet:
+        path: /startup
+        port: http
+      failureThreshold: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: http
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 3
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: http
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+
+Probe handlers can be httpGet, tcpSocket, or exec. A readiness failure removes
+the Pod from Service endpoints; it does not restart the container.
+
+Lifecycle hooks
+---------------
+
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "sleep 5"]
+
+Termination behavior
+--------------------
+1. Pod is marked for deletion and endpoints should stop receiving new traffic.
+2. preStop may run.
+3. Kubernetes sends SIGTERM to the container process.
+4. Kubernetes waits for terminationGracePeriodSeconds.
+5. If still running, Kubernetes sends SIGKILL.
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+The application must handle SIGTERM correctly. A shell wrapper can prevent the
+real process from receiving signals unless it uses exec or a suitable init.
+
+
+17. RESOURCE REQUESTS, LIMITS, AND QUOTAS
+=========================================
+
+Requests are used for scheduling. Limits cap usage or influence runtime
+behavior. A container may have one, both, or neither, depending on policy.
+
+Container resources
+-------------------
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+
+CPU units: 1 CPU is one core; 100m is 0.1 CPU. Memory suffixes include Mi and
+Gi. Requests and limits are per container and add up at Pod level.
+
+QoS classes
+-----------
+- Guaranteed: every container has CPU and memory requests equal to limits.
+- Burstable: at least one request or limit is set, but not Guaranteed.
+- BestEffort: no requests or limits are set.
+
+Inspect resources and QoS
+--------------------------
+
+    kubectl describe pod POD_NAME
+    kubectl get pod POD_NAME -o jsonpath='{.status.qosClass}{"\n"}'
+    kubectl describe node NODE_NAME
+
+ResourceQuota
+-------------
+
+    apiVersion: v1
+    kind: ResourceQuota
+    metadata:
+      name: team-quota
+      namespace: staging
+    spec:
+      hard:
+        requests.cpu: "2"
+        requests.memory: 4Gi
+        limits.cpu: "4"
+        limits.memory: 8Gi
+        pods: "20"
+
+    kubectl get resourcequota -n staging
+    kubectl describe resourcequota team-quota -n staging
+
+LimitRange
+----------
+
+    apiVersion: v1
+    kind: LimitRange
+    metadata:
+      name: defaults
+      namespace: staging
+    spec:
+      limits:
+      - type: Container
+        defaultRequest:
+          cpu: "100m"
+          memory: 128Mi
+        default:
+          cpu: "500m"
+          memory: 256Mi
+
+If a namespace has a quota or LimitRange, a Pod can be rejected at admission
+time when it lacks required resource settings or exceeds quota.
+
+PodDisruptionBudget
+-------------------
+
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: web-pdb
+    spec:
+      minAvailable: 2
+      selector:
+        matchLabels:
+          app: web
+
+PDBs protect against voluntary disruptions such as node drain; they do not
+guarantee availability during every failure or override an impossible rollout.
+
+
+18. SECURITY, RBAC, AND SERVICE ACCOUNTS
+========================================
+
+Authentication identifies a caller. Authorization decides what that caller may
+do. RBAC permissions are additive; there are no deny rules in standard RBAC.
+
+ServiceAccount commands
+-----------------------
+
+    kubectl create serviceaccount app-sa -n staging
+    kubectl get serviceaccount app-sa -n staging
+    kubectl create token app-sa -n staging
+
+Use a ServiceAccount in a Pod
+-----------------------------
+
+    spec:
+      serviceAccountName: app-sa
+      automountServiceAccountToken: false
+
+Disable token automount unless the application needs Kubernetes API access.
+
+Role and RoleBinding example
+-----------------------------
+
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: pod-reader
+      namespace: staging
+    rules:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list", "watch"]
+    ---
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: read-pods
+      namespace: staging
+    subjects:
+    - kind: ServiceAccount
+      name: app-sa
+      namespace: staging
+    roleRef:
+      kind: Role
+      name: pod-reader
+      apiGroup: rbac.authorization.k8s.io
+
+ClusterRole and ClusterRoleBinding grant cluster-wide or cluster-scoped access.
+Use a Role and RoleBinding for namespaced access where possible.
+
+RBAC inspection and authorization checks
+-----------------------------------------
+
+    kubectl get role,rolebinding -n staging
+    kubectl get clusterrole,clusterrolebinding
+    kubectl describe role pod-reader -n staging
+    kubectl auth can-i get pods -n staging
+    kubectl auth can-i list pods --as=system:serviceaccount:staging:app-sa -n staging
+    kubectl auth can-i '*' '*' --all-namespaces
+
+RBAC rule fields
+----------------
+
+    apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+Core resources use apiGroups: [""]. Subresources can be written as
+resources: ["pods/log"] or ["pods/exec"] when appropriate.
+
+SecurityContext example
+-----------------------
+
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: app
+        image: nginx:1.27
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+
+Some images require writable paths or root privileges. Apply the strongest
+settings compatible with the application and cluster admission policy.
+
+
+19. NETWORKPOLICY
+=================
+
+NetworkPolicy is enforced only when the cluster's network plugin supports it.
+An empty selector can match all Pods in a namespace; be precise.
+
+Default deny all ingress and egress in a namespace
+---------------------------------------------------
+
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny
+      namespace: staging
+    spec:
+      podSelector: {}
+      policyTypes:
+      - Ingress
+      - Egress
+
+Allow frontend to call backend on TCP 8080
+-------------------------------------------
+
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-frontend-to-backend
+      namespace: staging
+    spec:
+      podSelector:
+        matchLabels:
+          app: backend
+      policyTypes:
+      - Ingress
+      ingress:
+      - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+        ports:
+        - protocol: TCP
+          port: 8080
+
+Allow DNS egress after default deny
+------------------------------------
+
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-dns
+      namespace: staging
+    spec:
+      podSelector: {}
+      policyTypes:
+      - Egress
+      egress:
+      - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+NetworkPolicy selectors
+-----------------------
+- podSelector: Pods in the same namespace as the policy.
+- namespaceSelector: namespaces matching labels.
+- ipBlock: CIDR ranges, optionally excluding except ranges.
+- Combining namespaceSelector and podSelector in the same list item means the
+  intersection; separate list items mean OR.
+
+    - ipBlock:
+        cidr: 10.0.0.0/8
+        except:
+        - 10.0.0.0/16
+
+
+20. AUTOSCALING
+===============
+
+Horizontal Pod Autoscaler (HPA)
+--------------------------------
+HPA changes the replica count of a scalable workload. CPU and memory utilization
+usually require resource requests, and metrics-server or another metrics API
+must be available.
+
+Commands
+--------
+
+    kubectl autoscale deployment web --min=2 --max=10 --cpu-percent=70
+    kubectl get hpa
+    kubectl describe hpa web
+    kubectl get hpa web -o yaml
+
+HPA manifest
+------------
+
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: web
+    spec:
+      scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: web
+      minReplicas: 2
+      maxReplicas: 10
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+        scaleUp:
+          stabilizationWindowSeconds: 0
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+
+For utilization targets, the percentage is calculated against the requested
+resource. An HPA showing unknown metrics requires checking metrics APIs and Pod
+resource requests.
+
+Vertical Pod Autoscaler (VPA)
+-----------------------------
+VPA availability depends on an installed add-on. It recommends or adjusts
+container resources; do not assume it is present in a plain cluster.
+
+Cluster Autoscaler
+------------------
+Cluster Autoscaler changes the number of nodes, usually through a cloud or
+provider integration. A Pod stuck Pending because of insufficient capacity may
+need node scaling, but a scheduling constraint can still prevent placement.
+
+
+21. ROLLOUTS, UPDATES, AND ROLLBACKS
+====================================
+
+Deployment rollout commands
+---------------------------
+
+    kubectl rollout status deployment/web
+    kubectl rollout status deployment/web --timeout=120s
+    kubectl rollout history deployment/web
+    kubectl rollout history deployment/web --revision=2
+    kubectl rollout pause deployment/web
+    kubectl rollout resume deployment/web
+    kubectl rollout undo deployment/web
+
+Change image, environment, and replicas
+---------------------------------------
+
+    kubectl set image deployment/web web=nginx:1.28
+    kubectl set env deployment/web LOG_LEVEL=debug
+    kubectl set env deployment/web FEATURE_FLAG-
+    kubectl scale deployment/web --replicas=4
+
+Record a change when using imperative updates
+----------------------------------------------
+
+    kubectl annotate deployment/web kubernetes.io/change-cause='upgrade nginx'
+
+Revision behavior
+-----------------
+The Deployment creates a new ReplicaSet when its Pod template changes. A pure
+scale operation does not create a new revision. Rollback restores a previous
+Pod template; it does not necessarily restore external data or database state.
+
+Canary pattern with two Deployments
+-----------------------------------
+Use stable labels in the Service selector and route traffic deliberately. For
+example, stable may select app=web, while separate Deployments use labels such
+as version=stable and version=canary. A Service cannot express weighted traffic
+by itself; use an ingress, gateway, mesh, or external load balancer when weights
+are required.
+
+
+22. LOGS, EXEC, PORT-FORWARD, COPY, AND DEBUGGING
+================================================
+
+Logs
+----
+
+    kubectl logs POD_NAME
+    kubectl logs POD_NAME -c CONTAINER_NAME
+    kubectl logs deployment/web
+    kubectl logs -l app=web --all-containers=true
+    kubectl logs POD_NAME --since=1h
+    kubectl logs POD_NAME --tail=100
+    kubectl logs POD_NAME -f
+    kubectl logs POD_NAME --previous
+
+--previous is essential after a container has restarted and its previous
+instance produced the error.
+
+Execute commands
+----------------
+
+    kubectl exec -it POD_NAME -- sh
+    kubectl exec -it POD_NAME -c CONTAINER_NAME -- sh
+    kubectl exec POD_NAME -- env
+    kubectl exec POD_NAME -- printenv APP_MODE
+    kubectl exec POD_NAME -- ls -la /app
+
+If bash is absent, use sh. The -- separates kubectl flags from the command run
+inside the container.
+
+Port-forward
+------------
+
+    kubectl port-forward pod/POD_NAME 8080:80
+    kubectl port-forward service/web 8080:80
+    kubectl port-forward deployment/web 8080:80
+
+Port-forward listens locally and is intended for debugging, not production
+traffic.
+
+Copy files
+----------
+
+    kubectl cp ./local.txt POD_NAME:/tmp/local.txt
+    kubectl cp POD_NAME:/var/log/app.log ./app.log
+    kubectl cp -c CONTAINER_NAME ./local.txt POD_NAME:/tmp/local.txt
+
+kubectl cp depends on tar being available in the container image. For minimal
+images, use exec plus a suitable transfer method.
+
+Temporary debugging Pod
+-----------------------
+
+    kubectl run debug --rm -it --restart=Never \
+        --image=nicolaka/netshoot -- bash
+
+If that image is unavailable or prohibited, use a permitted image such as:
+
+    kubectl run debug --rm -it --restart=Never \
+        --image=busybox:1.36 -- sh
+
+Debug a running Pod with an ephemeral container, when supported and permitted
+-------------------------------------------------------------------------------
+
+    kubectl debug -it POD_NAME --image=busybox:1.36 --target=CONTAINER_NAME
+
+Create a copy of a Pod for debugging
+-------------------------------------
+
+    kubectl debug POD_NAME -it --copy-to=debug-copy \
+        --container=debugger --image=busybox:1.36 -- sh
+
+Network checks from a debugging container
+-----------------------------------------
+
+    nslookup SERVICE_NAME
+    wget -qO- http://SERVICE_NAME:SERVICE_PORT
+    wget -S -O- http://SERVICE_NAME:SERVICE_PORT
+    nc -vz SERVICE_NAME SERVICE_PORT
+    ip addr
+    ip route
+
+If tools are missing, use a debug image that contains them and is approved by
+the environment.
+
+
+23. CLUSTER AND NODE TROUBLESHOOTING
+====================================
+
+A reliable troubleshooting order
+---------------------------------
+
+    kubectl config current-context
+    kubectl cluster-info
+    kubectl get namespace
+    kubectl get pod POD_NAME -o wide
+    kubectl describe pod POD_NAME
+    kubectl logs POD_NAME --all-containers=true --previous
+    kubectl get events --sort-by=.lastTimestamp
+
+Pod is Pending
+-------------
+1. Read Events in describe output.
+2. Check node capacity, taints, selectors, affinity, and PVC binding.
+
+    kubectl describe pod POD_NAME
+    kubectl get nodes
+    kubectl describe node NODE_NAME
+    kubectl get pvc
+
+Pod is Running but application is not reachable
+------------------------------------------------
+1. Check container process and listening port.
+2. Test localhost inside the Pod.
+3. Check Service selector and endpoints.
+4. Check NetworkPolicy, Ingress, and external routing.
+
+    kubectl exec POD_NAME -- sh -c 'ps; netstat -lnt 2>/dev/null || true'
+    kubectl exec POD_NAME -- wget -qO- http://127.0.0.1:PORT
+    kubectl get svc SERVICE_NAME -o yaml
+    kubectl get endpoints SERVICE_NAME -o yaml
+
+Service has no endpoints
+------------------------
+
+    kubectl get pods --show-labels
+    kubectl get service SERVICE_NAME -o jsonpath='{.spec.selector}{"\n"}'
+    kubectl get endpoints SERVICE_NAME -o yaml
+
+Compare every Service selector key/value with every target Pod label.
+
+CrashLoopBackOff
+----------------
+It is a symptom, not the root cause. Check:
+
+    kubectl describe pod POD_NAME
+    kubectl logs POD_NAME --previous
+    kubectl get pod POD_NAME -o jsonpath='{.status.containerStatuses[*].lastState}{"\n"}'
+
+Typical causes: application exits, bad command/args, missing configuration,
+permission failure, failed liveness probe, OOMKilled, or dependency failure.
+
+ImagePullBackOff or ErrImagePull
+--------------------------------
+
+    kubectl describe pod POD_NAME
+    kubectl get pod POD_NAME -o jsonpath='{.spec.containers[*].image}{"\n"}'
+    kubectl get secret
+
+Check image name/tag, registry reachability, imagePullSecrets, credentials, and
+whether the node architecture supports the image.
+
+OOMKilled
+---------
+
+    kubectl get pod POD_NAME -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}{"\n"}'
+    kubectl describe pod POD_NAME
+    kubectl top pod POD_NAME
+
+Review memory limit, workload behavior, and request/limit sizing. Raising a
+limit may hide a leak; investigate the application as well.
+
+Readiness probe failed
+----------------------
+Check path, port, protocol, initial delay, startup time, credentials, and
+whether the application binds to 0.0.0.0 instead of only 127.0.0.1.
+
+PVC Pending
+-----------
+
+    kubectl describe pvc CLAIM_NAME
+    kubectl get storageclass
+    kubectl get pv
+
+Check storageClassName, access mode, requested size, provisioner health, and
+whether dynamic provisioning is available.
+
+Node NotReady
+-------------
+
+    kubectl describe node NODE_NAME
+    kubectl get events --field-selector involvedObject.name=NODE_NAME
+    kubectl get pods -A -o wide --field-selector spec.nodeName=NODE_NAME
+
+Investigate kubelet, container runtime, CNI, disk pressure, memory pressure,
+network reachability, and the provider's node health.
+
+
+24. COMMON FAILURE STATES
+=========================
+
+Pending
+-------
+Pod is accepted but not scheduled or not fully running. Events identify the
+blocker.
+
+ContainerCreating
+-----------------
+Container setup is incomplete. Inspect volume mounts, image pulls, CNI, and
+admission events.
+
+CrashLoopBackOff
+----------------
+Container is repeatedly starting and failing. Use current and --previous logs.
+
+ImagePullBackOff / ErrImagePull
+-------------------------------
+Image cannot be pulled or credentials are invalid.
+
+CreateContainerConfigError
+---------------------------
+Container configuration references an absent ConfigMap, Secret, key, or field.
+
+CreateContainerError
+--------------------
+Runtime could not create the container. Inspect Events and runtime details.
+
+Terminating
+-----------
+Deletion is in progress or blocked by finalizers, volume detach, kubelet, or
+API connectivity.
+
+OOMKilled
+---------
+The container exceeded its memory limit or the node experienced memory pressure.
+
+Evicted
+-------
+The kubelet evicted a Pod due to node resource pressure such as memory, disk,
+or ephemeral storage.
+
+Ready 0/1
+--------
+The Pod may be running but its readiness probe is failing. A Service normally
+does not route to an unready Pod.
+
+
+25. JSONPATH, CUSTOM COLUMNS, AND OUTPUT FILTERS
+================================================
+
+JSONPath basics
+---------------
+
+    kubectl get pods -o jsonpath='{.items[*].metadata.name}{"\n"}'
+    kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\n"}{end}'
+    kubectl get pod POD -o jsonpath='{.spec.containers[*].image}{"\n"}'
+    kubectl get pod POD -o jsonpath='{.status.podIP}{"\n"}'
+    kubectl get svc SVC -o jsonpath='{.spec.clusterIP}{"\n"}'
+
+Useful fields
+-------------
+
+    .metadata.name
+    .metadata.namespace
+    .metadata.labels
+    .spec.nodeName
+    .spec.containers[*].name
+    .spec.containers[*].image
+    .status.phase
+    .status.podIP
+    .status.containerStatuses[*].restartCount
+    .status.containerStatuses[*].state
+
+Custom columns
+--------------
+
+    kubectl get pods -o custom-columns='NAME:.metadata.name,IP:.status.podIP,STATUS:.status.phase'
+    kubectl get nodes -o custom-columns='NAME:.metadata.name,TAINTS:.spec.taints[*].effect'
+    kubectl get pods -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODE:.spec.nodeName'
+
+Sort resources
+--------------
+
+    kubectl get pods --sort-by=.status.startTime
+    kubectl get pods --sort-by=.status.containerStatuses[0].restartCount
+    kubectl get events --sort-by=.lastTimestamp
+
+Field selectors
+---------------
+
+    kubectl get pods --field-selector=status.phase=Pending
+    kubectl get pods --field-selector=spec.nodeName=NODE_NAME
+    kubectl get events --field-selector=type=Warning
+
+Label selectors
+---------------
+
+    kubectl get pods -l app=web
+    kubectl get pods -l 'app in (web,api)'
+    kubectl get pods -l 'tier!=frontend'
+
+Output for shell processing
+---------------------------
+
+    kubectl get pods -o name
+    kubectl get pods -o json
+    kubectl get pods -o yaml
+
+Avoid parsing the human-readable default table when JSONPath, custom-columns,
+or JSON output is available.
+
+
+26. PATCHING AND IMPERATIVE SHORTCUTS
+=====================================
+
+Edit a live resource
+--------------------
+
+    kubectl edit deployment/web
+
+Apply a merge patch
+-------------------
+
+    kubectl patch deployment web -p '{"spec":{"replicas":4}}'
+
+Apply a JSON patch
+------------------
+
+    kubectl patch deployment web --type=json \
+        -p='[{"op":"replace","path":"/spec/replicas","value":4}]'
+
+Strategic merge patches are supported for many built-in resources but behavior
+varies by resource and patch type. Prefer a manifest for repeatable changes.
+
+Imperative resource creation
+----------------------------
+
+    kubectl create namespace staging
+    kubectl create deployment web --image=nginx:1.27
+    kubectl create service clusterip web --tcp=80:80
+    kubectl create configmap app-config --from-literal=MODE=prod
+    kubectl create secret generic app-secret --from-literal=TOKEN=redacted
+    kubectl create job hello --image=busybox:1.36 -- echo hello
+    kubectl create serviceaccount app-sa
+
+Delete carefully
+----------------
+
+    kubectl delete pod POD_NAME
+    kubectl delete deployment web
+    kubectl delete -f app.yaml
+    kubectl delete pods -l app=web
+    kubectl delete pod POD_NAME --grace-period=0 --force
+
+Force deletion can leave processes running briefly and should be reserved for
+cases where normal deletion is blocked. Confirm the exact target first.
+
+
+27. HELM AND KUSTOMIZE BASICS
+=============================
+
+Helm
+----
+Helm must be installed separately; availability is environment-dependent.
+
+    helm version
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm repo update
+    helm search repo bitnami
+    helm show values bitnami/nginx
+    helm install web bitnami/nginx -n staging --create-namespace
+    helm list -A
+    helm get values web -n staging
+    helm get manifest web -n staging
+    helm upgrade web bitnami/nginx -n staging --set replicaCount=2
+    helm rollback web 1 -n staging
+    helm uninstall web -n staging
+
+Render without installing
+-------------------------
+
+    helm template web ./chart -f values.yaml
+    helm upgrade --install web ./chart -n staging --dry-run=client --debug
+
+Never install a chart blindly in an assessment or production cluster. Inspect
+rendered manifests and values first.
+
+Kustomize
+---------
+Kustomize is built into kubectl for standard bases and overlays.
+
+    kubectl kustomize ./overlays/staging
+    kubectl apply -k ./overlays/staging
+    kubectl diff -k ./overlays/staging
+    kubectl delete -k ./overlays/staging
+
+Example kustomization.yaml
+--------------------------
+
+    apiVersion: kustomize.config.k8s.io/v1beta1
+    kind: Kustomization
+    namespace: staging
+    resources:
+    - ../../base
+    commonLabels:
+      environment: staging
+    images:
+    - name: nginx
+      newTag: "1.28"
+
+
+28. USEFUL SHELL RECIPES
+========================
+
+List all Pods with namespace, node, phase, and IP
+--------------------------------------------------
+
+    kubectl get pods -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODE:.spec.nodeName,PHASE:.status.phase,IP:.status.podIP'
+
+Find Pods that are not Running
+------------------------------
+
+    kubectl get pods -A --field-selector=status.phase!=Running
+
+Find containers with restarts
+-----------------------------
+
+    kubectl get pods -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,RESTARTS:.status.containerStatuses[*].restartCount'
+
+Show every container image in the cluster
+------------------------------------------
+
+    kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+Show all resources in a namespace
+---------------------------------
+
+    kubectl get all,configmap,secret,pvc,ingress,networkpolicy -n staging
+
+Check API access as a ServiceAccount
+-------------------------------------
+
+    kubectl auth can-i get pods --as=system:serviceaccount:staging:app-sa -n staging
+    kubectl auth can-i list secrets --as=system:serviceaccount:staging:app-sa -n staging
+
+Watch a rollout and its Pods
+----------------------------
+
+    kubectl rollout status deployment/web -n staging --watch
+    kubectl get pods -n staging -l app=web -w
+
+Use a local port to test a Service
+----------------------------------
+
+    kubectl port-forward -n staging service/web 8080:80
+    curl -i http://127.0.0.1:8080/
+
+Test cluster DNS from a temporary Pod
+--------------------------------------
+
+    kubectl run dns-test --rm -it --restart=Never \
+        --image=busybox:1.36 -- nslookup kubernetes.default
+
+Test a Service from inside the cluster
+---------------------------------------
+
+    kubectl run curl-test --rm -it --restart=Never \
+        --image=curlimages/curl:8.10.1 -- \
+        curl -i http://web.staging.svc.cluster.local:80
+
+Use a variable to avoid repeating a namespace
+----------------------------------------------
+
+    NS=staging
+    kubectl get pods -n "$NS"
+    kubectl get svc -n "$NS"
+
+The variable name is safe in a shell, but always quote it when expanding it.
+
+
+29. COMPLETE PRACTICE MANIFESTS
+===============================
+
+The following example creates a namespace, ConfigMap, Secret, Deployment,
+Service, HPA, and NetworkPolicy. Save it as practice-stack.yaml and apply it
+with kubectl apply -f practice-stack.yaml.
+
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: practice
+    ---
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: web-config
+      namespace: practice
+    data:
+      APP_MODE: "practice"
+      LOG_LEVEL: "info"
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: web-secret
+      namespace: practice
+    type: Opaque
+    stringData:
+      API_TOKEN: "replace-me"
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: web
+      namespace: practice
+      labels:
+        app: web
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: web
+      template:
+        metadata:
+          labels:
+            app: web
+        spec:
+          containers:
+          - name: web
+            image: nginx:1.27
+            ports:
+            - name: http
+              containerPort: 80
+            envFrom:
+            - configMapRef:
+                name: web-config
+            - secretRef:
+                name: web-secret
+            resources:
+              requests:
+                cpu: "100m"
+                memory: 128Mi
+              limits:
+                cpu: "500m"
+                memory: 256Mi
+            readinessProbe:
+              httpGet:
+                path: /
+                port: http
+              initialDelaySeconds: 3
+              periodSeconds: 5
+            livenessProbe:
+              httpGet:
+                path: /
+                port: http
+              initialDelaySeconds: 10
+              periodSeconds: 10
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: web
+      namespace: practice
+    spec:
+      selector:
+        app: web
+      ports:
+      - name: http
+        port: 80
+        targetPort: http
+    ---
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: web
+      namespace: practice
+    spec:
+      scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: web
+      minReplicas: 2
+      maxReplicas: 5
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+    ---
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-web-ingress
+      namespace: practice
+    spec:
+      podSelector:
+        matchLabels:
+          app: web
+      policyTypes:
+      - Ingress
+      ingress:
+      - ports:
+        - protocol: TCP
+          port: 80
+
+Apply and verify
+----------------
+
+    kubectl apply -f practice-stack.yaml
+    kubectl get all -n practice
+    kubectl get configmap,secret,hpa,networkpolicy -n practice
+    kubectl rollout status deployment/web -n practice
+    kubectl get endpoints web -n practice
+    kubectl port-forward -n practice service/web 8080:80
+
+Clean up
+--------
+
+    kubectl delete -f practice-stack.yaml
+
+The Secret uses stringData so the API server performs the encoding. Do not use
+the example token in a real environment.
+
+===============================================================================
+                               END OF REFERENCE
+===============================================================================
